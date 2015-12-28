@@ -41,7 +41,7 @@
     "⁻¹ᵉ" "⁻¹ᶠ" "⁻¹ᵍ" "⁻¹ʰ" "⁻¹ⁱ" "⁻¹ᵐ" "⁻¹ᵒ" "⁻¹ᵖ" "⁻¹ʳ" "⁻¹ᵛ" "⁻¹ˢ" "⁻²" "⁻²ᵒ"
     "⬝e" "⬝i" "⬝o" "⬝op" "⬝po" "⬝h" "⬝v" "⬝hp" "⬝vp" "⬝ph" "⬝pv" "⬝r" "◾" "◾o"
     "∘n" "∘f" "∘fi" "∘nf" "∘fn" "∘n1f" "∘1nf" "∘f1n" "∘fn1"
-    "^c" "≃c" "≅c" "×c" "×f" "×n" "+c" "+f" "+n")
+    "^c" "≃c" "≅c" "×c" "×f" "×n" "+c" "+f" "+n" "ℕ₋₂")
   "lean constants")
 (defconst lean-constants-regexp (regexp-opt lean-constants))
 (defconst lean-numerals-regexp
@@ -54,10 +54,10 @@
          '("persistent" "notation" "visible" "instance" "trans_instance"
            "class" "parsing_only" "coercion" "unfold_full" "constructor"
            "reducible" "irreducible" "semireducible" "quasireducible" "wf"
-           "whnf" "multiple_instances" "none" "decls" "declarations"
-           "coercions" "classes" "symm" "subst" "refl" "trans" "simp" "simps" "congr"
-           "forward" "no_pattern" "notations" "abbreviations" "begin_end_hints" "tactic_hints"
-           "reduce_hints" "unfold_hints" "aliases" "eqv" "intro" "intro!" "elim"
+           "whnf" "multiple_instances" "none" "decl" "declaration"
+           "relation" "symm" "subst" "refl" "trans" "simp" "congr"
+           "backward" "forward" "no_pattern" "begin_end" "tactic" "abbreviation"
+           "reducible" "unfold" "alias" "eqv" "intro" "intro!" "elim" "grinder"
            "localrefinfo" "recursor"))
   "lean modifiers")
 (defconst lean-modifiers-regexp

@@ -105,7 +105,7 @@ definition has_left_inverse (f : A → B) : Prop := ∃ finv : B → A, left_inv
 -- g is a right inverse to f
 definition right_inverse (g : B → A) (f : A → B) : Prop := left_inverse f g
 
-definition id_of_righ_inverse {g : B → A} {f : A → B} : right_inverse g f → f ∘ g = id :=
+definition id_of_right_inverse {g : B → A} {f : A → B} : right_inverse g f → f ∘ g = id :=
 assume h, funext h
 
 definition has_right_inverse (f : A → B) : Prop := ∃ finv : B → A, right_inverse finv f
@@ -156,4 +156,4 @@ theorem bijective_id : bijective (@id A) := and.intro injective_id surjective_id
 end function
 
 -- copy reducible annotations to top-level
-export [reduce_hints] [unfold_hints] function
+export [reducible] [unfold] function

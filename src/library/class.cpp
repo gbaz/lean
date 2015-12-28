@@ -16,10 +16,7 @@ Author: Leonardo de Moura
 #include "library/protected.h"
 #include "library/class.h"
 #include "library/decl_stats.h"
-
-#ifndef LEAN_INSTANCE_DEFAULT_PRIORITY
-#define LEAN_INSTANCE_DEFAULT_PRIORITY 1000
-#endif
+#include "library/attribute_manager.h"
 
 namespace lean {
 enum class class_entry_kind { Class, Multi, Instance, TransInstance, DerivedTransInstance };
@@ -65,7 +62,7 @@ struct class_state {
         if (auto it = m_priorities.find(i))
             return *it;
         else
-            return LEAN_INSTANCE_DEFAULT_PRIORITY;
+            return LEAN_DEFAULT_PRIORITY;
     }
 
     bool is_instance(name const & i) const {
@@ -281,7 +278,7 @@ environment add_instance(environment const & env, name const & n, unsigned prior
 }
 
 environment add_instance(environment const & env, name const & n, name const & ns, bool persistent) {
-    return add_instance(env, n, LEAN_INSTANCE_DEFAULT_PRIORITY, ns, persistent);
+    return add_instance(env, n, LEAN_DEFAULT_PRIORITY, ns, persistent);
 }
 
 static name * g_source = nullptr;
@@ -329,7 +326,7 @@ environment add_trans_instance(environment const & env, name const & n, unsigned
 }
 
 environment add_trans_instance(environment const & env, name const & n, name const & ns, bool persistent) {
-    return add_trans_instance(env, n, LEAN_INSTANCE_DEFAULT_PRIORITY, ns, persistent);
+    return add_trans_instance(env, n, LEAN_DEFAULT_PRIORITY, ns, persistent);
 }
 
 environment mark_multiple_instances(environment const & env, name const & n, name const & ns, bool persistent) {
@@ -345,6 +342,14 @@ bool try_multiple_instances(environment const & env, name const & n) {
 bool is_instance(environment const & env, name const & i) {
     class_state const & s = class_ext::get_state(env);
     return s.is_instance(i);
+}
+
+unsigned get_instance_priority(environment const & env, name const & n) {
+    class_state const & s                  = class_ext::get_state(env);
+    class_state::instance_priorities insts = s.m_priorities;
+    if (auto r = insts.find(n))
+        return *r;
+    return LEAN_DEFAULT_PRIORITY;
 }
 
 name_predicate mk_class_pred(environment const & env) {
@@ -474,9 +479,37 @@ list<expr> get_local_instances(type_checker & tc, list<expr> const & ctx, name c
 void initialize_class() {
     g_tmp_prefix = new name(name::mk_internal_unique_name());
     g_source     = new name("_source");
-    g_class_name = new name("classes");
+    g_class_name = new name("class");
     g_key = new std::string("class");
     class_ext::initialize();
+
+    register_attribute("class", "type class",
+                       [](environment const & env, io_state const &, name const & d, name const & ns, bool persistent) {
+                           return add_class(env, d, ns, persistent);
+                       },
+                       is_class);
+
+    register_attribute("multiple_instances", "a type class where elaborator should consider multiple solutions",
+                       [](environment const & env, io_state const &, name const & d, name const & ns, bool persistent) {
+                           return mark_multiple_instances(env, d, ns, persistent);
+                       },
+                       try_multiple_instances);
+
+    register_prio_attribute("instance", "type class instance",
+                            [](environment const & env, io_state const &, name const & d, unsigned prio,
+                               name const & ns, bool persistent) {
+                                return add_instance(env, d, prio, ns, persistent);
+                            },
+                            is_instance,
+                            get_instance_priority);
+
+    register_prio_attribute("trans_instance", "transitive type class instance",
+                            [](environment const & env, io_state const &, name const & d, unsigned prio,
+                               name const & ns, bool persistent) {
+                                return add_trans_instance(env, d, prio, ns, persistent);
+                            },
+                            is_instance,
+                            get_instance_priority);
 }
 
 void finalize_class() {

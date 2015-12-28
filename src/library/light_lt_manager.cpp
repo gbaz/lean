@@ -3,14 +3,15 @@ Copyright (c) 2015 Daniel Selsam. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Author: Daniel Selsam
 */
-#include "library/light_lt_manager.h"
+#include <string>
 #include "util/sstream.h"
 #include "util/name_set.h"
 #include "util/safe_arith.h"
 #include "kernel/error_msgs.h"
 #include "kernel/instantiate.h"
 #include "library/scoped_ext.h"
-#include <string>
+#include "library/attribute_manager.h"
+#include "library/light_lt_manager.h"
 
 namespace lean {
 
@@ -190,9 +191,19 @@ io_state_stream const & operator<<(io_state_stream const & out, light_rule_set c
 }
 
 void initialize_light_rule_set() {
-    g_class_name = new name("lrs");
-    g_key        = new std::string("lrs");
+    g_class_name = new name("light");
+    g_key        = new std::string("LIGHT");
     lrs_ext::initialize();
+    register_param_attribute("light", "hint for simplifier",
+                             [](environment const & env, io_state const &, name const & d, unsigned idx, name const & ns, bool persistent) {
+                                 return add_light_rule(env, d, idx, ns, persistent);
+                             },
+                             [](environment const & env, name const & n) { return static_cast<bool>(is_light_rule(env, n)); },
+                             [](environment const & env, name const & n) {
+                                 auto r = is_light_rule(env, n);
+                                 lean_assert(r);
+                                 return *r;
+                             });
 }
 
 void finalize_light_rule_set() {
@@ -200,5 +211,4 @@ void finalize_light_rule_set() {
     delete g_key;
     delete g_class_name;
 }
-
 }

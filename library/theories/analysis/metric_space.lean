@@ -211,7 +211,8 @@ exists.intro δ (and.intro
      (suffices dist x x' < δ, from and.right Hδ x' (and.intro Heq this),
       this)))
 
-theorem image_seq_converges_of_converges [instance] (X : ℕ → M) [HX : converges_seq X] {f : M → N} (Hf : continuous f) :
+theorem image_seq_converges_of_converges [instance] (X : ℕ → M) [HX : converges_seq X] {f : M → N}
+                                                    (Hf : continuous f) :
         converges_seq (λ n, f (X n)) :=
   begin
     cases HX with xlim Hxlim,
@@ -236,3 +237,14 @@ theorem image_seq_converges_of_converges [instance] (X : ℕ → M) [HX : conver
 end metric_space_M_N
 
 end metric_space
+
+/- complete metric spaces -/
+
+open metric_space
+
+structure complete_metric_space [class] (M : Type) extends metricM : metric_space M : Type :=
+(complete : ∀ X, @cauchy M metricM X → @converges_seq M metricM X)
+
+proposition complete (M : Type) [cmM : complete_metric_space M] {X : ℕ → M} (H : cauchy X) :
+  converges_seq X :=
+complete_metric_space.complete X H

@@ -18,11 +18,12 @@ Author: Leonardo de Moura
 #include "library/annotation.h"
 #include "library/occurs.h"
 #include "library/scoped_ext.h"
+#include "library/attribute_manager.h"
 #include "library/idx_metavar.h"
 #include "library/blast/options.h"
 #include "library/blast/blast.h"
 #include "library/blast/forward/pattern.h"
-#include "library/blast/forward/forward_lemma_set.h"
+#include "library/blast/forward/forward_lemmas.h"
 
 namespace lean {
 /*
@@ -620,7 +621,7 @@ hi_lemma mk_hi_lemma_core(tmp_type_context & ctx, expr const & H, unsigned num_u
 hi_lemma mk_hi_lemma(expr const & H) {
     blast_tmp_type_context ctx;
     unsigned max_steps = get_config().m_pattern_max_steps;
-    return mk_hi_lemma_core(*ctx, H, 0, LEAN_FORWARD_DEFAULT_PRIORITY, max_steps);
+    return mk_hi_lemma_core(*ctx, H, 0, LEAN_DEFAULT_PRIORITY, max_steps);
 }
 
 hi_lemma mk_hi_lemma(name const & c, unsigned priority) {
@@ -639,7 +640,7 @@ hi_lemma mk_hi_lemma(name const & c, unsigned priority) {
 list<multi_pattern> mk_multipatterns(environment const & env, io_state const & ios, name const & c) {
     blast::scope_debug scope(env, ios);
     // we regenerate the patterns to make sure they reflect the current set of reducible constants
-    auto lemma = blast::mk_hi_lemma(c, LEAN_FORWARD_DEFAULT_PRIORITY);
+    auto lemma = blast::mk_hi_lemma(c, LEAN_DEFAULT_PRIORITY);
     return lemma.m_multi_patterns;
 }
 
@@ -649,6 +650,12 @@ void initialize_pattern() {
     no_pattern_ext::initialize();
     g_pattern_hint      = new name("pattern_hint");
     register_annotation(*g_pattern_hint);
+
+    register_attribute("no_pattern", "do not consider terms containing this declaration in the pattern inference procedure",
+                       [](environment const & env, io_state const &, name const & d, name const & ns, bool persistent) {
+                           return add_no_pattern(env, d, ns, persistent);
+                       },
+                       is_no_pattern);
 }
 
 void finalize_pattern() {
