@@ -6,7 +6,7 @@ Author: Floris van Doorn
 Theorems about the natural numbers specific to HoTT
 -/
 
-import .order
+import .basic .order
 
 open is_trunc unit empty eq equiv algebra
 
@@ -26,6 +26,12 @@ namespace nat
   end
 
   definition is_hprop_lt [instance] (n m : ℕ) : is_hprop (n < m) := !is_hprop_le
+
+  definition is_hprop_dvd [instance] (n m : ℕ) : is_hprop (n ∣ m) := sorry
+/-  begin
+  assert lem : Π{n m : ℕ} (p : n ∣ m) (q : n = m), p = q ▸ dvd.refl n,
+  { intros, cases p}
+  end -/
 
   definition le_equiv_succ_le_succ (n m : ℕ) : (n ≤ m) ≃ (succ n ≤ succ m) :=
   equiv_of_is_hprop succ_le_succ le_of_succ_le_succ

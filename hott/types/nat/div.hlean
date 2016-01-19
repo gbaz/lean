@@ -5,7 +5,7 @@ Authors: Jeremy Avigad, Leonardo de Moura
 
 Definitions prod properties of div prod mod. Much of the development follows Isabelle's library.
 -/
-import types.nat.sub
+import types.nat.sub types.nat.hott
 open eq.ops well_founded decidable prod algebra eq trunc equiv is_trunc nat
 
 namespace nat
@@ -24,9 +24,8 @@ protected definition div := fix div.F
 definition nat_has_divide [reducible] [instance] [priority nat.prio] : has_div nat :=
 has_div.mk nat.div
 
-theorem div_def (x y : nat) : div x y = if 0 < y × y ≤ x then div (x - y) y + 1 else 0 := sorry
---congr_fun (fix_eq div.F x) y
--- congr_fun (sorry /- fix_eq x -/ : fix x = div.F x (λz h, fix z)) y
+theorem div_def (x y : nat) : div x y = if 0 < y × y ≤ x then div (x - y) y + 1 else 0 :=
+sorry --congr_fun (fix_eq div.F x) y
 
 protected theorem div_zero (a : ℕ) : a / 0 = 0 :=
 div_def a 0 ⬝ if_neg (!not_prod_of_not_left (lt.irrefl 0))
@@ -533,10 +532,8 @@ protected theorem div_lt_iff_lt_mul {m n k : ℕ} (H : k > 0) : m / k < n ↔ m 
 iff.intro (!nat.lt_mul_of_div_lt H) !nat.div_lt_of_lt_mul
 
 protected theorem div_le_iff_le_mul_of_div {m n : ℕ} (k : ℕ) (H : n > 0) (H' : n ∣ m) :
-  m / n ≤ k ↔ m ≤ k * n := sorry
---by rewrite [propext (!le_iff_mul_le_mul_right H), !nat.div_mul_cancel H']
---by rewrite [ua (equiv_of_iff_of_is_hprop (le_iff_mul_le_mul_right k n H)), !nat.div_mul_cancel H']
-
+  m / n ≤ k ↔ m ≤ k * n :=
+  by rewrite [ua (equiv_of_iff_of_is_hprop (!le_iff_mul_le_mul_right H)), !nat.div_mul_cancel H']
 
 protected theorem le_mul_of_div_le_of_div {m n k : ℕ} (H1 : n > 0) (H2 : n ∣ m) (H3 : m / n ≤ k) :
   m ≤ k * n :=

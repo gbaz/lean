@@ -6,7 +6,7 @@ Author: Floris van Doorn
 Theorems about the integers specific to HoTT
 -/
 
-import .basic types.eq arity algebra.bundled
+import .basic types.eq arity algebra.bundled .order
 open core eq is_equiv equiv equiv.ops algebra is_trunc
 open nat (hiding pred)
 
@@ -30,6 +30,7 @@ namespace int
   rec_nat_on a erfl
                (λb g, f ⬝e g)
                (λb g, g ⬝e f⁻¹ᵉ)
+
 
   -- definition iterate_trans {A : Type} (f : A ≃ A) (a : ℤ)
   --   : iterate f a ⬝e f = iterate f (a + 1) :=

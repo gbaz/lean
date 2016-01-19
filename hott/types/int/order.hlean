@@ -9,7 +9,7 @@ prod transfer the results.
 import .basic algebra.ordered_ring
 open nat
 open decidable
-open int eq.ops algebra eq
+open int eq.ops algebra eq unit is_trunc
 
 namespace int
 
@@ -23,6 +23,15 @@ protected definition lt (a b : ℤ) : Type.{0} := (a + 1) ≤ b
 
 definition int_has_lt [instance] [reducible] [priority int.prio]: has_lt int :=
 has_lt.mk int.lt
+
+definition is_hprop_nonneg (a : ℤ) : is_hprop (nonneg a) :=
+begin
+induction a: unfold [nonneg]; exact _
+end
+
+definition is_hprop_le [instance] (a b : ℤ) : is_hprop (le a b) := !is_hprop_nonneg
+
+definition is_hprop_lt [instance] (a b : ℤ) : is_hprop (lt a b) := !is_hprop_nonneg
 
 local attribute nonneg [reducible]
 private definition decidable_nonneg [instance] (a : ℤ) : decidable (nonneg a) := int.cases_on a _ _
@@ -148,7 +157,7 @@ iff.intro
   (assume H, pair (le_of_lt H) (int.ne_of_lt H))
   (assume H,
     have a ≤ b, from prod.pr1 H,
-    have a ≠ b, from prod.elim_right H,
+    have a ≠ b, from prod.pr2 H,
     obtain (n : ℕ) (Hn : a + n = b), from le.elim `a ≤ b`,
     have n ≠ 0, from (assume H' : n = 0, `a ≠ b` (!add_zero ▸ H' ▸ Hn)),
     obtain (k : ℕ) (Hk : n = nat.succ k), from nat.exists_eq_succ_of_ne_zero this,
