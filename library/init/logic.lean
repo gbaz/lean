@@ -130,6 +130,15 @@ attribute eq.refl [refl]
 attribute eq.trans [trans]
 attribute eq.symm [symm]
 
+definition cast {A B : Type} (H : A = B) (a : A) : B :=
+eq.rec a H
+
+theorem cast_proof_irrel {A B : Type} (H₁ H₂ : A = B) (a : A) : cast H₁ a = cast H₂ a :=
+rfl
+
+theorem cast_eq {A : Type} (H : A = A) (a : A) : cast H a = a :=
+rfl
+
 /- ne -/
 
 definition ne [reducible] {A : Type} (a b : A) := ¬(a = b)
@@ -168,39 +177,39 @@ end
 
 infixl ` == `:50 := heq
 
-namespace heq
-  universe variable u
-  variables {A B C : Type.{u}} {a a' : A} {b b' : B} {c : C}
+section
+universe variable u
+variables {A B C : Type.{u}} {a a' : A} {b b' : B} {c : C}
 
-  theorem to_eq (H : a == a') : a = a' :=
-  have H₁ : ∀ (Ht : A = A), eq.rec a Ht = a, from
-    λ Ht, eq.refl a,
-  heq.rec H₁ H (eq.refl A)
+theorem eq_of_heq (H : a == a') : a = a' :=
+have H₁ : ∀ (Ht : A = A), eq.rec a Ht = a, from
+  λ Ht, eq.refl a,
+heq.rec H₁ H (eq.refl A)
 
-  theorem elim {A : Type} {a : A} {P : A → Type} {b : A} (H₁ : a == b)
-    : P a → P b := eq.rec_on (to_eq H₁)
+theorem heq.elim {A : Type} {a : A} {P : A → Type} {b : A} (H₁ : a == b)
+: P a → P b := eq.rec_on (eq_of_heq H₁)
 
-  theorem subst {P : ∀T : Type, T → Prop} : a == b → P A a → P B b :=
-  heq.rec_on
+theorem heq.subst {P : ∀T : Type, T → Prop} : a == b → P A a → P B b :=
+heq.rec_on
 
-  theorem symm (H : a == b) : b == a :=
-  heq.rec_on H (refl a)
+theorem heq.symm (H : a == b) : b == a :=
+heq.rec_on H (heq.refl a)
 
-  theorem of_eq (H : a = a') : a == a' :=
-  eq.subst H (refl a)
+theorem heq_of_eq (H : a = a') : a == a' :=
+eq.subst H (heq.refl a)
 
-  theorem trans (H₁ : a == b) (H₂ : b == c) : a == c :=
-  subst H₂ H₁
+theorem heq.trans (H₁ : a == b) (H₂ : b == c) : a == c :=
+heq.subst H₂ H₁
 
-  theorem of_heq_of_eq (H₁ : a == b) (H₂ : b = b') : a == b' :=
-  trans H₁ (of_eq H₂)
+theorem heq_of_heq_of_eq (H₁ : a == b) (H₂ : b = b') : a == b' :=
+heq.trans H₁ (heq_of_eq H₂)
 
-  theorem of_eq_of_heq (H₁ : a = a') (H₂ : a' == b) : a == b :=
-  trans (of_eq H₁) H₂
+theorem heq_of_eq_of_heq (H₁ : a = a') (H₂ : a' == b) : a == b :=
+heq.trans (heq_of_eq H₁) H₂
 
-  definition type_eq (H : a == b) : A = B :=
-  heq.rec_on H (eq.refl A)
-end heq
+definition type_eq_of_heq (H : a == b) : A = B :=
+heq.rec_on H (eq.refl A)
+end
 
 open eq.ops
 theorem eq_rec_heq {A : Type} {P : A → Type} {a a' : A} (H : a = a') (p : P a) : H ▹ p == p :=
@@ -213,7 +222,7 @@ theorem heq_of_eq_rec_right {A : Type} {P : A → Type} : ∀ {a a' : A} {p₁ :
 | a a p₁ p₂ (eq.refl a) h := eq.rec_on h !heq.refl
 
 theorem of_heq_true {a : Prop} (H : a == true) : a :=
-of_eq_true (heq.to_eq H)
+of_eq_true (eq_of_heq H)
 
 theorem eq_rec_compose : ∀ {A B C : Type} (p₁ : B = C) (p₂ : A = B) (a : A), p₁ ▹ (p₂ ▹ a : B) = (p₂ ⬝ p₁) ▹ a
 | A A A (eq.refl A) (eq.refl A) a := calc
@@ -223,17 +232,20 @@ theorem eq_rec_compose : ∀ {A B C : Type} (p₁ : B = C) (p₂ : A = B) (a : A
 theorem eq_rec_eq_eq_rec {A₁ A₂ : Type} {p : A₁ = A₂} : ∀ {a₁ : A₁} {a₂ : A₂}, p ▹ a₁ = a₂ → a₁ = p⁻¹ ▹ a₂ :=
 eq.drec_on p (λ a₁ a₂ h, eq.drec_on h rfl)
 
-theorem eq_rec_of_heq_left : ∀ {A₁ A₂ : Type} {a₁ : A₁} {a₂ : A₂} (h : a₁ == a₂), heq.type_eq h ▹ a₁ = a₂
+theorem eq_rec_of_heq_left : ∀ {A₁ A₂ : Type} {a₁ : A₁} {a₂ : A₂} (h : a₁ == a₂), type_eq_of_heq h ▹ a₁ = a₂
 | A A a a (heq.refl a) := rfl
 
-theorem eq_rec_of_heq_right {A₁ A₂ : Type} {a₁ : A₁} {a₂ : A₂} (h : a₁ == a₂) : a₁ = (heq.type_eq h)⁻¹ ▹ a₂ :=
+theorem eq_rec_of_heq_right {A₁ A₂ : Type} {a₁ : A₁} {a₂ : A₂} (h : a₁ == a₂) : a₁ = (type_eq_of_heq h)⁻¹ ▹ a₂ :=
 eq_rec_eq_eq_rec (eq_rec_of_heq_left h)
 
 attribute heq.refl [refl]
 attribute heq.trans [trans]
-attribute heq.of_heq_of_eq [trans]
-attribute heq.of_eq_of_heq [trans]
+attribute heq_of_heq_of_eq [trans]
+attribute heq_of_eq_of_heq [trans]
 attribute heq.symm [symm]
+
+theorem cast_heq : ∀ {A B : Type} (H : A = B) (a : A), cast H a == a
+| A A (eq.refl A) a := !heq.refl
 
 /- and -/
 
@@ -342,6 +354,11 @@ iff.intro
   (λHab Hc, iff.mp H2 (Hab (iff.mpr H1 Hc)))
   (λHcd Ha, iff.mpr H2 (Hcd (iff.mp H1 Ha)))
 
+theorem imp_congr_right (H : a → (b ↔ c)) : (a → b) ↔ (a → c) :=
+iff.intro
+  (take Hab Ha, iff.elim_left (H Ha) (Hab Ha))
+  (take Hab Ha, iff.elim_right (H Ha) (Hab Ha))
+
 theorem not_not_intro (Ha : a) : ¬¬a :=
 assume Hna : ¬a, Hna Ha
 
@@ -391,6 +408,11 @@ and.rec (λHa Hb, and.intro (H₂ Ha) (H₃ Hb))
 
 theorem and_congr [congr] (H1 : a ↔ c) (H2 : b ↔ d) : (a ∧ b) ↔ (c ∧ d) :=
 iff.intro (and.imp (iff.mp H1) (iff.mp H2)) (and.imp (iff.mpr H1) (iff.mpr H2))
+
+theorem and_congr_right (H : a → (b ↔ c)) : (a ∧ b) ↔ (a ∧ c) :=
+iff.intro
+  (take Hab, obtain `a` `b`, from Hab, and.intro `a` (iff.elim_left (H `a`) `b`))
+  (take Hac, obtain `a` `c`, from Hac, and.intro `a` (iff.elim_right (H `a`) `c`))
 
 theorem and.comm [simp] : a ∧ b ↔ b ∧ a :=
 iff.intro and.swap and.swap
@@ -751,6 +773,9 @@ intro : (∀ a b : A, a = b) → subsingleton A
 
 protected definition subsingleton.elim {A : Type} [H : subsingleton A] : ∀(a b : A), a = b :=
 subsingleton.rec (λp, p) H
+
+protected definition subsingleton.helim {A B : Type} [H : subsingleton A] (h : A = B) (a : A) (b : B) : a == b :=
+by induction h; apply heq_of_eq; apply subsingleton.elim
 
 definition subsingleton_prop [instance] (p : Prop) : subsingleton p :=
 subsingleton.intro (λa b, !proof_irrel)

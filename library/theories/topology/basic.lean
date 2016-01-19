@@ -34,24 +34,11 @@ theorem Open_sUnion {S : set (set X)} (H : ∀₀ t ∈ S, Open t) : Open (⋃�
 sUnion_mem_opens H
 
 theorem Open_Union {I : Type} {s : I → set X} (H : ∀ i, Open (s i)) : Open (⋃ i, s i) :=
-have ∀₀ t ∈ s '[univ], Open t,
-  from take t, suppose t ∈ s '[univ],
+have ∀₀ t ∈ s ' univ, Open t,
+  from take t, suppose t ∈ s ' univ,
     obtain i [univi (Hi : s i = t)], from this,
     show Open t, by rewrite -Hi; exact H i,
 using this, by rewrite Union_eq_sUnion_image; apply Open_sUnion this
-
-private definition bin_ext (s t : set X) (n : ℕ) : set X :=
-nat.cases_on n s (λ m, t)
-
-private lemma Union_bin_ext (s t : set X) : (⋃ i, bin_ext s t i) = s ∪ t :=
-ext (take x, iff.intro
-  (suppose x ∈ Union (bin_ext s t),
-    obtain i (Hi : x ∈ (bin_ext s t) i), from this,
-    by cases i; apply or.inl Hi; apply or.inr Hi)
-  (suppose x ∈ s ∪ t,
-    or.elim this
-      (suppose x ∈ s, exists.intro 0 this)
-      (suppose x ∈ t, exists.intro 1 this)))
 
 theorem Open_union {s t : set X} (Hs : Open s) (Ht : Open t) : Open (s ∪ t) :=
 have ∀ i, Open (bin_ext s t i), by intro i; cases i; exact Hs; exact Ht,
@@ -195,17 +182,33 @@ inductive opens_generated_by {X : Type} (B : set (set X)) : set X → Prop :=
                     opens_generated_by B (s ∩ t)
 | sUnion_mem     : ∀ ⦃S : set (set X)⦄, S ⊆ opens_generated_by B → opens_generated_by B (⋃₀ S)
 
-definition topology_generated_by [instance] [reducible] {X : Type} (B : set (set X)) : topology X :=
+protected definition generated_by [instance] [reducible] {X : Type} (B : set (set X)) : topology X :=
 ⦃topology,
   opens            := opens_generated_by B,
   univ_mem_opens   := opens_generated_by.univ_mem B,
-  sUnion_mem_opens := opens_generated_by.sUnion_mem,
-  inter_mem_opens  := λ s Hs t Ht, opens_generated_by.inter_mem Hs Ht
+  inter_mem_opens  := λ s Hs t Ht, opens_generated_by.inter_mem Hs Ht,
+  sUnion_mem_opens := opens_generated_by.sUnion_mem
 ⦄
 
 theorem generators_mem_topology_generated_by {X : Type} (B : set (set X)) :
-  let T := topology_generated_by B in
+  let T := topology.generated_by B in
   ∀₀ s ∈ B, @Open _ T s :=
 λ s H, opens_generated_by.generators_mem H
+
+theorem opens_generated_by_initial {X : Type} {B : set (set X)} {T : topology X} (H : B ⊆ @opens _ T) :
+  opens_generated_by B ⊆ @opens _ T :=
+begin
+  intro s Hs,
+  induction Hs with s sB s t os ot soX toX S SB SOX,
+    {exact H sB},
+    {exact univ_mem_opens X},
+    {exact inter_mem_opens X soX toX},
+  exact sUnion_mem_opens SOX
+end
+
+theorem topology_generated_by_initial {X : Type} {B : set (set X)} {T : topology X}
+    (H : ∀₀ s ∈ B, @Open _ T s) {s : set X} (H1 : @Open _ (topology.generated_by B) s) :
+  @Open _ T s :=
+opens_generated_by_initial H H1
 
 end topology

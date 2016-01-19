@@ -77,8 +77,11 @@ optional<expr> strategy_fn::search() {
             if (failed(r)) {
                 // all choice points failed...
                 lean_trace_search(tout() << "strategy '" << get_name() << "' failed, no proof found\n";);
-                if (show_failure())
-                    display_curr_state();
+                if (show_failure()) {
+                    display_at_buffer(sstream() << "strategy '" << get_name() << "' failed, no proof found, final state:\n");
+                    bool include_inactive = false;
+                    display_curr_state_at_buffer(include_inactive);
+                }
                 return none_expr();
             }
             break;
@@ -107,5 +110,9 @@ strategy operator||(strategy const & s1, strategy const & s2) {
         else
             return s2();
     };
+}
+
+strategy fail_strategy() {
+    return []() { return none_expr(); }; // NOLINT
 }
 }}

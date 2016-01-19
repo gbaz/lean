@@ -9,6 +9,11 @@ Author: Leonardo de Moura
 #include "kernel/type_checker.h"
 
 namespace lean {
+/** \brief Return true iff t is a constant named f_name or an application of the form (f_name a_1 ... a_k) */
+bool is_app_of(expr const & t, name const & f_name);
+/** \brief Return true iff t is a constant named f_name or an application of the form (f_name a_1 ... a_nargs) */
+bool is_app_of(expr const & t, name const & f_name, unsigned nargs);
+
 typedef std::unique_ptr<type_checker> type_checker_ptr;
 /** \brief Unfold constant \c e or constant application (i.e., \c e is of the form (f ....),
     where \c f is a constant */
@@ -110,6 +115,7 @@ level get_datatype_level(expr ind_type);
 expr instantiate_univ_param (expr const & e, name const & p, level const & l);
 
 expr mk_true();
+bool is_true(expr const & e);
 expr mk_true_intro();
 
 bool is_and(expr const & e, expr & arg1, expr & arg2);
@@ -178,6 +184,7 @@ bool is_eq_drec(environment const & env, expr const & e);
 
 bool is_eq(expr const & e);
 bool is_eq(expr const & e, expr & lhs, expr & rhs);
+bool is_eq(expr const & e, expr & A, expr & lhs, expr & rhs);
 /** \brief Return true iff \c e is of the form (eq A a a) */
 bool is_eq_a_a(expr const & e);
 /** \brief Return true iff \c e is of the form (eq A a a') where \c a and \c a' are definitionally equal */

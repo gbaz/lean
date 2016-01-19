@@ -40,6 +40,8 @@ struct hi_lemma {
     list<expr>           m_mvars;
     expr                 m_prop;
     expr                 m_proof;
+    /* term that was used to generate hi_lemma, it is only used for tracing and profiling */
+    expr                 m_expr;
 };
 
 inline bool operator==(hi_lemma const & l1, hi_lemma const & l2) { return l1.m_prop == l2.m_prop; }
@@ -56,6 +58,10 @@ namespace blast {
     The maximum number of steps is extracted from the blast config object. */
 hi_lemma mk_hi_lemma(expr const & H);
 hi_lemma mk_hi_lemma(name const & n, unsigned prio);
+/** \brief Similar to \c mk_hi_lemma, but uses a different pattern inference procedure.
+    It assumes the given lemma has a conclusion of the form t ~ s, and uses \c t as the pattern.
+    \remark This procedure is used to automatically convert [simp] lemmas into [forward] lemmas. */
+hi_lemma mk_hi_simp_lemma(name const & n, unsigned prio);
 }
 
 void initialize_pattern();

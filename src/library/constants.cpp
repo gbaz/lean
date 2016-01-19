@@ -18,6 +18,9 @@ name const * g_bit1 = nullptr;
 name const * g_bool = nullptr;
 name const * g_bool_ff = nullptr;
 name const * g_bool_tt = nullptr;
+name const * g_cast = nullptr;
+name const * g_cast_eq = nullptr;
+name const * g_cast_heq = nullptr;
 name const * g_char = nullptr;
 name const * g_char_mk = nullptr;
 name const * g_classical = nullptr;
@@ -44,6 +47,8 @@ name const * g_eq_refl = nullptr;
 name const * g_eq_subst = nullptr;
 name const * g_eq_symm = nullptr;
 name const * g_eq_trans = nullptr;
+name const * g_eq_of_heq = nullptr;
+name const * g_eq_rec_heq = nullptr;
 name const * g_exists_elim = nullptr;
 name const * g_false = nullptr;
 name const * g_false_of_true_iff_false = nullptr;
@@ -61,7 +66,9 @@ name const * g_has_zero = nullptr;
 name const * g_has_zero_zero = nullptr;
 name const * g_heq = nullptr;
 name const * g_heq_refl = nullptr;
-name const * g_heq_to_eq = nullptr;
+name const * g_heq_symm = nullptr;
+name const * g_heq_trans = nullptr;
+name const * g_heq_of_eq = nullptr;
 name const * g_iff = nullptr;
 name const * g_iff_elim_left = nullptr;
 name const * g_iff_elim_right = nullptr;
@@ -192,6 +199,7 @@ name const * g_string_str = nullptr;
 name const * g_sub = nullptr;
 name const * g_subsingleton = nullptr;
 name const * g_subsingleton_elim = nullptr;
+name const * g_subsingleton_helim = nullptr;
 name const * g_tactic = nullptr;
 name const * g_tactic_all_goals = nullptr;
 name const * g_tactic_and_then = nullptr;
@@ -278,6 +286,9 @@ void initialize_constants() {
     g_bool = new name{"bool"};
     g_bool_ff = new name{"bool", "ff"};
     g_bool_tt = new name{"bool", "tt"};
+    g_cast = new name{"cast"};
+    g_cast_eq = new name{"cast_eq"};
+    g_cast_heq = new name{"cast_heq"};
     g_char = new name{"char"};
     g_char_mk = new name{"char", "mk"};
     g_classical = new name{"classical"};
@@ -304,6 +315,8 @@ void initialize_constants() {
     g_eq_subst = new name{"eq", "subst"};
     g_eq_symm = new name{"eq", "symm"};
     g_eq_trans = new name{"eq", "trans"};
+    g_eq_of_heq = new name{"eq_of_heq"};
+    g_eq_rec_heq = new name{"eq_rec_heq"};
     g_exists_elim = new name{"exists", "elim"};
     g_false = new name{"false"};
     g_false_of_true_iff_false = new name{"false_of_true_iff_false"};
@@ -321,7 +334,9 @@ void initialize_constants() {
     g_has_zero_zero = new name{"has_zero", "zero"};
     g_heq = new name{"heq"};
     g_heq_refl = new name{"heq", "refl"};
-    g_heq_to_eq = new name{"heq", "to_eq"};
+    g_heq_symm = new name{"heq", "symm"};
+    g_heq_trans = new name{"heq", "trans"};
+    g_heq_of_eq = new name{"heq_of_eq"};
     g_iff = new name{"iff"};
     g_iff_elim_left = new name{"iff", "elim_left"};
     g_iff_elim_right = new name{"iff", "elim_right"};
@@ -452,6 +467,7 @@ void initialize_constants() {
     g_sub = new name{"sub"};
     g_subsingleton = new name{"subsingleton"};
     g_subsingleton_elim = new name{"subsingleton", "elim"};
+    g_subsingleton_helim = new name{"subsingleton", "helim"};
     g_tactic = new name{"tactic"};
     g_tactic_all_goals = new name{"tactic", "all_goals"};
     g_tactic_and_then = new name{"tactic", "and_then"};
@@ -539,6 +555,9 @@ void finalize_constants() {
     delete g_bool;
     delete g_bool_ff;
     delete g_bool_tt;
+    delete g_cast;
+    delete g_cast_eq;
+    delete g_cast_heq;
     delete g_char;
     delete g_char_mk;
     delete g_classical;
@@ -565,6 +584,8 @@ void finalize_constants() {
     delete g_eq_subst;
     delete g_eq_symm;
     delete g_eq_trans;
+    delete g_eq_of_heq;
+    delete g_eq_rec_heq;
     delete g_exists_elim;
     delete g_false;
     delete g_false_of_true_iff_false;
@@ -582,7 +603,9 @@ void finalize_constants() {
     delete g_has_zero_zero;
     delete g_heq;
     delete g_heq_refl;
-    delete g_heq_to_eq;
+    delete g_heq_symm;
+    delete g_heq_trans;
+    delete g_heq_of_eq;
     delete g_iff;
     delete g_iff_elim_left;
     delete g_iff_elim_right;
@@ -713,6 +736,7 @@ void finalize_constants() {
     delete g_sub;
     delete g_subsingleton;
     delete g_subsingleton_elim;
+    delete g_subsingleton_helim;
     delete g_tactic;
     delete g_tactic_all_goals;
     delete g_tactic_and_then;
@@ -799,6 +823,9 @@ name const & get_bit1_name() { return *g_bit1; }
 name const & get_bool_name() { return *g_bool; }
 name const & get_bool_ff_name() { return *g_bool_ff; }
 name const & get_bool_tt_name() { return *g_bool_tt; }
+name const & get_cast_name() { return *g_cast; }
+name const & get_cast_eq_name() { return *g_cast_eq; }
+name const & get_cast_heq_name() { return *g_cast_heq; }
 name const & get_char_name() { return *g_char; }
 name const & get_char_mk_name() { return *g_char_mk; }
 name const & get_classical_name() { return *g_classical; }
@@ -825,6 +852,8 @@ name const & get_eq_refl_name() { return *g_eq_refl; }
 name const & get_eq_subst_name() { return *g_eq_subst; }
 name const & get_eq_symm_name() { return *g_eq_symm; }
 name const & get_eq_trans_name() { return *g_eq_trans; }
+name const & get_eq_of_heq_name() { return *g_eq_of_heq; }
+name const & get_eq_rec_heq_name() { return *g_eq_rec_heq; }
 name const & get_exists_elim_name() { return *g_exists_elim; }
 name const & get_false_name() { return *g_false; }
 name const & get_false_of_true_iff_false_name() { return *g_false_of_true_iff_false; }
@@ -842,7 +871,9 @@ name const & get_has_zero_name() { return *g_has_zero; }
 name const & get_has_zero_zero_name() { return *g_has_zero_zero; }
 name const & get_heq_name() { return *g_heq; }
 name const & get_heq_refl_name() { return *g_heq_refl; }
-name const & get_heq_to_eq_name() { return *g_heq_to_eq; }
+name const & get_heq_symm_name() { return *g_heq_symm; }
+name const & get_heq_trans_name() { return *g_heq_trans; }
+name const & get_heq_of_eq_name() { return *g_heq_of_eq; }
 name const & get_iff_name() { return *g_iff; }
 name const & get_iff_elim_left_name() { return *g_iff_elim_left; }
 name const & get_iff_elim_right_name() { return *g_iff_elim_right; }
@@ -973,6 +1004,7 @@ name const & get_string_str_name() { return *g_string_str; }
 name const & get_sub_name() { return *g_sub; }
 name const & get_subsingleton_name() { return *g_subsingleton; }
 name const & get_subsingleton_elim_name() { return *g_subsingleton_elim; }
+name const & get_subsingleton_helim_name() { return *g_subsingleton_helim; }
 name const & get_tactic_name() { return *g_tactic; }
 name const & get_tactic_all_goals_name() { return *g_tactic_all_goals; }
 name const & get_tactic_and_then_name() { return *g_tactic_and_then; }

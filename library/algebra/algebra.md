@@ -7,9 +7,10 @@ Algebraic structures.
 * [relation](relation.lean)
 * [binary](binary.lean) : binary operations
 * [order](order.lean)
-* [intervals](intervals.lean)
+* [interval](interval.lean)
 * [lattice](lattice.lean)
 * [complete lattice](complete_lattice.lean)
+* [galois_connection](galois_connection.lean)
 * [group](group.lean)
 * [group_power](group_power.lean) : nat and int powers
 * [group_bigops](group_bigops.lean) : products and sums over lists, finsets and sets

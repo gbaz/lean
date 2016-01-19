@@ -4,10 +4,12 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Author: Leonardo de Moura
 */
+#include <string>
 #include <vector>
 #include "util/sstream.h"
 #include "kernel/for_each_fn.h"
 #include "kernel/find_fn.h"
+#include "kernel/replace_fn.h"
 #include "kernel/type_checker.h"
 #include "library/replace_visitor.h"
 #include "library/util.h"
@@ -32,6 +34,7 @@ Author: Leonardo de Moura
 #include "library/blast/trace.h"
 #include "library/blast/options.h"
 #include "library/blast/strategies/portfolio.h"
+#include "library/blast/simplifier/simp_lemmas.h"
 
 namespace lean {
 namespace blast {
@@ -75,6 +78,11 @@ class blastenv {
 
     environment                m_env;
     io_state                   m_ios;
+    /* blast may use different strategies.
+       We use m_buffer_ios to store messages describing failed attempts.
+       These messages are reported to the user only if none of the strategies have worked.
+       We dump the content of the diagnostic channel into an blast_exception. */
+    io_state                   m_buffer_ios;
     name_generator             m_ngen;
     unsigned                   m_next_uref_idx{0};
     unsigned                   m_next_mref_idx{0};
@@ -393,7 +401,7 @@ class blastenv {
                 lean_assert(is_meta(aux));
                 expr type = visit(m_tc.infer(aux).first);
                 expr mref = m_state.mk_metavar(ctx, type);
-                m_mvar2meta_mref.insert(mlocal_name(mvar), mk_pair(e, mref));
+                m_mvar2meta_mref.insert(mlocal_name(mvar), mk_pair(aux, mref));
                 return mk_mref_app(mref, args.size() - prefix_sz, args.data() + prefix_sz);
             }
         }
@@ -443,9 +451,46 @@ class blastenv {
         g.get_hyps(hs);
         for (expr const & h : hs) {
             lean_assert(is_local(h));
-            expr new_type = normalize(to_blast_expr(mlocal_type(h)));
-            expr href     = s.mk_hypothesis(local_pp_name(h), new_type, h);
-            local2href.insert(mlocal_name(h), href);
+            if (!local_info(h).is_rec()) {
+                /*
+                  We do not add auxiliary locals used to compile recursive equations.
+                  The problem is that blast doesn't know when it is safe to use this kind of hypothesis.
+                  For example: suppose we are defining the following function using recursive equations and blast.
+
+                         lemma comm : ∀ a b : nat, a + b = b + a
+                         | a        0        := by simp
+                         | a        (succ n) := by simp
+
+                  Both goals will contain the (rec) hypothesis
+
+                         comm :  ∀ a b : nat, a + b = b + a
+
+                  If we the recursive equation is being compiled using structural recursion, then we can only apply
+                  'comm' to strucuturall smaller terms. If we are using well-founded recursion, then we need the well-founded relation.
+                  Blast does not have access to this information. We address this issue by simply ignoring this kind of
+                  auxiliary rec hypothesis.
+
+                  Of course, this workaround forces the user to provide a valid induction hypothesis.
+                  Example:
+
+                        lemma comm : ∀ a b : nat, a + b = b + a
+                        | a        0        := by simp
+                        | a        (succ n) :=
+                          assert a + n = n + a, from !comm,
+                          by simp
+
+                  In this simple example, we can simply ask blast to apply the recursor automatically for use.
+
+                        lemma comm : ∀ a b : nat, a + b = b + a :=
+                        by rec_simp
+
+                  However, this is not always possible. Sometimes, we will be defining a complex function using recursive equations.
+                  The definition may contain nested proofs that we may want to discharge using blast.
+                */
+                expr new_type = normalize(to_blast_expr(mlocal_type(h)));
+                expr href     = s.mk_hypothesis(local_pp_name(h), new_type, h);
+                local2href.insert(mlocal_name(h), href);
+            }
         }
         expr new_target = normalize(to_blast_expr(g.get_type()));
         s.set_target(new_target);
@@ -466,8 +511,62 @@ class blastenv {
         m_initial_context = to_list(ctx);
     }
 
+    name_map<level> mk_uref2uvar() const {
+        name_map<level> r;
+        m_uvar2uref.for_each([&](name const & uvar_id, level const & uref) {
+                lean_assert(is_uref(uref));
+                r.insert(meta_id(uref), mk_meta_univ(uvar_id));
+            });
+        return r;
+    }
 
-    expr to_tactic_proof(expr const & pr) {
+    name_map<expr> mk_mref2meta() const {
+        name_map<expr> r;
+        m_mvar2meta_mref.for_each([&](name const &, pair<expr, expr> const & p) {
+                lean_assert(is_mref(p.second));
+                r.insert(mlocal_name(p.second), p.first);
+            });
+        return r;
+    }
+
+    level restore_uvars(level const & l, name_map<level> const & uref2uvar) const {
+        return replace(l, [&](level const & l) {
+                if (is_meta(l)) {
+                    if (auto uvar = uref2uvar.find(meta_id(l)))
+                        return some_level(*uvar);
+                }
+                return none_level();
+            });
+    }
+
+    levels restore_uvars(levels const & ls, name_map<level> const & uref2uvar) const {
+        return map(ls, [&](level const & l) { return restore_uvars(l, uref2uvar); });
+    }
+
+    /* Convert uref's and mref's back into tactic metavariables */
+    expr restore_uvars_mvars(expr const & e, name_map<level> const & uref2uvar, name_map<expr> const & mref2meta) const {
+        return replace(e, [&](expr const & e, unsigned) {
+                if (is_mref(e))  {
+                    if (auto m = mref2meta.find(mlocal_name(e))) {
+                        return some_expr(*m);
+                    } else {
+                        throw blast_exception(sstream() << "blast tactic failed, resultant proof still contains internal meta-variables");
+                    }
+                } else if (is_sort(e)) {
+                    return some_expr(update_sort(e, restore_uvars(sort_level(e), uref2uvar)));
+                } else if (is_constant(e)) {
+                    return some_expr(update_constant(e, restore_uvars(const_levels(e), uref2uvar)));
+                } else {
+                    return none_expr();
+                }
+            });
+    }
+
+    level to_tactic_univ(level const & l, name_map<level> const & uref2uvar) {
+        return restore_uvars(m_curr_state.instantiate_urefs(l), uref2uvar);
+    }
+
+    expr to_tactic_expr(expr const & pr, name_map<level> const & uref2uvar, name_map<expr> const & mref2meta) {
         // When a proof is found we must
         // 1- Remove all occurrences of href's from pr
         expr pr1 = unfold_hypotheses_ge(m_curr_state, pr, 0);
@@ -475,15 +574,40 @@ class blastenv {
         //    and convert unassigned meta-variables back into
         //    tactic meta-variables.
         expr pr2 = m_curr_state.instantiate_urefs_mrefs(pr1);
-        // TODO(Leo):
-        // 3- The external tactic meta-variables that have been instantiated
-        //    by blast must also be communicated back to the tactic framework.
-        return pr2;
+        return restore_uvars_mvars(pr2, uref2uvar, mref2meta);
+    }
+
+
+    /* The external tactic meta-variables that have been instantiated
+       by blast must also be communicated back to the tactic framework. */
+    constraint_seq mk_cnstrs_for_assignments(name_map<level> const & uref2uvar, name_map<expr> const & mref2meta) {
+        constraint_seq r;
+        justification j = mk_justification("assigned by blast");
+        m_uvar2uref.for_each([&](name const & uvar_id, level const & uref) {
+                lean_assert(is_uref(uref));
+                if (auto v = m_curr_state.get_uref_assignment(uref)) {
+                    r += mk_level_eq_cnstr(mk_meta_univ(uvar_id), to_tactic_univ(*v, uref2uvar), j);
+                }
+            });
+        m_mvar2meta_mref.for_each([&](name const &, pair<expr, expr> const & p) {
+                lean_assert(is_mref(p.second));
+                if (auto v = m_curr_state.get_mref_assignment(p.second)) {
+                    r += mk_eq_cnstr(p.first, to_tactic_expr(*v, uref2uvar, mref2meta), j);
+                }
+            });
+        return r;
+    }
+
+    pair<expr, constraint_seq> to_tactic_proof(expr const & pr) {
+        name_map<level> uref2uvar = mk_uref2uvar();
+        name_map<expr>  mref2meta = mk_mref2meta();
+        return mk_pair(to_tactic_expr(pr, uref2uvar, mref2meta), mk_cnstrs_for_assignments(uref2uvar, mref2meta));
     }
 
 public:
     blastenv(environment const & env, io_state const & ios, list<name> const & ls, list<name> const & ds):
-        m_env(env), m_ios(ios), m_ngen(*g_prefix), m_lemma_hints(to_name_set(ls)), m_unfold_hints(to_name_set(ds)),
+        m_env(env), m_ios(ios), m_buffer_ios(ios),
+        m_ngen(*g_prefix), m_lemma_hints(to_name_set(ls)), m_unfold_hints(to_name_set(ds)),
         m_not_reducible_pred(mk_not_reducible_pred(env)),
         m_class_pred(mk_class_pred(env)),
         m_instance_pred(mk_instance_pred(env)),
@@ -501,6 +625,7 @@ public:
         m_unfold_macro_pred([](expr const &) { return true; }),
         m_tctx(*this),
         m_normalizer(m_tctx) {
+        m_buffer_ios.set_diagnostic_channel(std::shared_ptr<output_channel>(new string_output_channel()));
         clear_choice_points();
     }
 
@@ -532,18 +657,26 @@ public:
         init_classical_flag();
     }
 
-    optional<expr> operator()(goal const & g) {
+    pair<expr, constraint_seq> operator()(goal const & g) {
         init_state(g);
         if (auto r = apply_strategy()) {
-            return some_expr(to_tactic_proof(*r));
+            return to_tactic_proof(*r);
         } else {
-            return none_expr();
+            string_output_channel & channel = static_cast<string_output_channel &>(m_buffer_ios.get_diagnostic_channel());
+            std::string buffer = channel.str();
+            if (buffer.empty()) {
+                throw blast_exception(sstream() << " blast tactic failed");
+            } else {
+                throw blast_exception(sstream() << " blast tactic failed\n" << buffer << "-------");
+            }
         }
     }
 
     environment const & get_env() const { return m_env; }
 
     io_state const & get_ios() const { return m_ios; }
+
+    io_state const & get_buffer_ios() const { return m_buffer_ios; }
 
     state & get_curr_state() { return m_curr_state; }
 
@@ -568,7 +701,14 @@ public:
     expr infer_type(expr const & e) { return m_tctx.infer(e); }
     bool is_prop(expr const & e) { return m_tctx.is_prop(e); }
     bool is_def_eq(expr const & e1, expr const & e2) { return m_tctx.is_def_eq(e1, e2); }
-    optional<expr> mk_class_instance(expr const & e) { return m_tctx.mk_class_instance(e); }
+    optional<expr> mk_class_instance(expr const & e) {
+        m_tmp_ctx->clear();
+        return m_tmp_ctx->mk_class_instance(e);
+    }
+    optional<expr> mk_subsingleton_instance(expr const & type) {
+        m_tmp_ctx->clear();
+        return m_tmp_ctx->mk_subsingleton_instance(type);
+    }
 
     tmp_type_context * mk_tmp_type_context();
 
@@ -586,12 +726,24 @@ public:
         return m_congr_lemma_manager.mk_congr_simp(fn);
     }
 
+    optional<congr_lemma> mk_specialized_congr_lemma_for_simp(expr const & fn) {
+        return m_congr_lemma_manager.mk_specialized_congr_simp(fn);
+    }
+
     optional<congr_lemma> mk_congr_lemma(expr const & fn, unsigned num_args) {
         return m_congr_lemma_manager.mk_congr(fn, num_args);
     }
 
     optional<congr_lemma> mk_congr_lemma(expr const & fn) {
         return m_congr_lemma_manager.mk_congr(fn);
+    }
+
+    optional<congr_lemma> mk_hcongr_lemma(expr const & fn, unsigned num_args) {
+        return m_congr_lemma_manager.mk_hcongr(fn, num_args);
+    }
+
+    optional<congr_lemma> mk_specialized_congr_lemma(expr const & a) {
+        return m_congr_lemma_manager.mk_specialized_congr(a);
     }
 
     optional<congr_lemma> mk_rel_iff_congr(expr const & fn) {
@@ -608,6 +760,14 @@ public:
 
     fun_info get_fun_info(expr const & fn, unsigned nargs) {
         return m_fun_info_manager.get(fn, nargs);
+    }
+
+    fun_info get_specialized_fun_info(expr const & a) {
+        return m_fun_info_manager.get_specialized(a);
+    }
+
+    unsigned get_specialization_prefix_size(expr const & fn, unsigned nargs) {
+        return m_fun_info_manager.get_specialization_prefix_size(fn, nargs);
     }
 
     unsigned abstract_hash(expr const & e) {
@@ -930,6 +1090,11 @@ optional<expr> mk_class_instance(expr const & e) {
     return g_blastenv->mk_class_instance(e);
 }
 
+optional<expr> mk_subsingleton_instance(expr const & type) {
+    lean_assert(g_blastenv);
+    return g_blastenv->mk_subsingleton_instance(type);
+}
+
 expr mk_fresh_local(expr const & type, binder_info const & bi) {
     lean_assert(g_blastenv);
     return g_blastenv->mk_fresh_local(type, bi);
@@ -950,6 +1115,11 @@ optional<congr_lemma> mk_congr_lemma_for_simp(expr const & fn) {
     return g_blastenv->mk_congr_lemma_for_simp(fn);
 }
 
+optional<congr_lemma> mk_specialized_congr_lemma_for_simp(expr const & a) {
+    lean_assert(g_blastenv);
+    return g_blastenv->mk_specialized_congr_lemma_for_simp(a);
+}
+
 optional<congr_lemma> mk_congr_lemma(expr const & fn, unsigned num_args) {
     lean_assert(g_blastenv);
     return g_blastenv->mk_congr_lemma(fn, num_args);
@@ -958,6 +1128,16 @@ optional<congr_lemma> mk_congr_lemma(expr const & fn, unsigned num_args) {
 optional<congr_lemma> mk_congr_lemma(expr const & fn) {
     lean_assert(g_blastenv);
     return g_blastenv->mk_congr_lemma(fn);
+}
+
+optional<congr_lemma> mk_hcongr_lemma(expr const & fn, unsigned num_args) {
+    lean_assert(g_blastenv);
+    return g_blastenv->mk_hcongr_lemma(fn, num_args);
+}
+
+optional<congr_lemma> mk_specialized_congr_lemma(expr const & a) {
+    lean_assert(g_blastenv);
+    return g_blastenv->mk_specialized_congr_lemma(a);
 }
 
 optional<congr_lemma> mk_rel_iff_congr(expr const & fn) {
@@ -978,6 +1158,16 @@ fun_info get_fun_info(expr const & fn) {
 fun_info get_fun_info(expr const & fn, unsigned nargs) {
     lean_assert(g_blastenv);
     return g_blastenv->get_fun_info(fn, nargs);
+}
+
+fun_info get_specialized_fun_info(expr const & a) {
+    lean_assert(g_blastenv);
+    return g_blastenv->get_specialized_fun_info(a);
+}
+
+unsigned get_specialization_prefix_size(expr const & fn, unsigned nargs) {
+    lean_assert(g_blastenv);
+    return g_blastenv->get_specialization_prefix_size(fn, nargs);
 }
 
 unsigned abstract_hash(expr const & e) {
@@ -1036,6 +1226,16 @@ void display(sstream const & msg) {
     ios().get_diagnostic_channel() << msg.str();
 }
 
+void display_at_buffer(sstream const & msg) {
+    lean_assert(g_blastenv);
+    g_blastenv->get_buffer_ios().get_diagnostic_channel() << msg.str();
+}
+
+void display_curr_state_at_buffer(bool include_inactive) {
+    lean_assert(g_blastenv);
+    curr_state().display(g_blastenv->get_env(), g_blastenv->get_buffer_ios(), include_inactive);
+}
+
 scope_assignment::scope_assignment():m_keep(false) {
     lean_assert(g_blastenv);
     g_blastenv->m_tctx.push();
@@ -1069,6 +1269,7 @@ struct scope_debug::imp {
     scope_blastenv           m_scope2;
     scope_congruence_closure m_scope3;
     scope_config             m_scope4;
+    scope_simp               m_scope5;
     imp(environment const & env, io_state const & ios):
         m_scope1(true),
         m_benv(env, ios, list<name>(), list<name>()),
@@ -1160,14 +1361,15 @@ expr internalize(expr const & e) {
     return g_blastenv->internalize(e);
 }
 }
-optional<expr> blast_goal(environment const & env, io_state const & ios, list<name> const & ls, list<name> const & ds,
-                          goal const & g) {
+pair<expr, constraint_seq> blast_goal(environment const & env, io_state const & ios, list<name> const & ls, list<name> const & ds,
+                                      goal const & g) {
     scoped_expr_caching             scope1(true);
     blast::blastenv                 b(env, ios, ls, ds);
     blast::scope_blastenv           scope2(b);
     blast::scope_congruence_closure scope3;
     blast::scope_config             scope4(ios.get_options());
     scope_trace_env                 scope5(env, ios);
+    blast::scope_simp               scope6;
     return b(g);
 }
 void initialize_blast() {
@@ -1178,14 +1380,17 @@ void initialize_blast() {
     register_trace_class(name{"blast", "action"});
     register_trace_class(name{"blast", "search"});
     register_trace_class(name{"blast", "deadend"});
+    register_trace_class(name{"debug", "blast"});
 
     register_trace_class_alias("app_builder", name({"blast", "event"}));
     register_trace_class_alias(name({"simplifier", "failure"}), name({"blast", "event"}));
+    register_trace_class_alias("fun_info", name({"blast", "event"}));
 
     register_trace_class_alias(name({"cc", "propagation"}), "blast");
 
     register_trace_class_alias("blast", "blast_detailed");
     register_trace_class_alias("app_builder", "blast_detailed");
+    register_trace_class_alias("fun_info", "blast_detailed");
     register_trace_class_alias(name({"simplifier", "failure"}), "blast_detailed");
     register_trace_class_alias(name({"cc", "merge"}), "blast_detailed");
 

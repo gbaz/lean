@@ -5,13 +5,31 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Author: Leonardo de Moura
 */
 #include <algorithm>
+#include <limits>
 #include "kernel/for_each_fn.h"
 #include "kernel/instantiate.h"
 #include "kernel/abstract.h"
+#include "library/trace.h"
 #include "library/replace_visitor.h"
 #include "library/fun_info_manager.h"
 
 namespace lean {
+static name * g_fun_info = nullptr;
+void initialize_fun_info_manager() {
+    g_fun_info = new name("fun_info");
+    register_trace_class(*g_fun_info);
+}
+
+void finalize_fun_info_manager() {
+    delete g_fun_info;
+}
+
+#define lean_trace_fun_info(Code) lean_trace(*g_fun_info, Code)
+
+static bool is_fun_info_trace_enabled() {
+    return is_trace_class_enabled(*g_fun_info);
+}
+
 fun_info_manager::fun_info_manager(type_context & ctx):
     m_ctx(ctx) {
 }
@@ -33,16 +51,20 @@ list<unsigned> fun_info_manager::collect_deps(expr const & type, buffer<expr> co
     return to_list(deps);
 }
 
-auto fun_info_manager::get(expr const & e) -> fun_info {
-    if (auto r = m_fun_info.find(e))
-        return *r;
-    expr type = m_ctx.relaxed_try_to_pi(m_ctx.infer(e));
-    buffer<param_info> info;
+/* Store parameter info for fn in \c pinfos and return the dependencies of the resulting type
+   (if compute_resulting_deps == true). */
+list<unsigned> fun_info_manager::get_core(expr const & fn, buffer<param_info> & pinfos,
+                                          unsigned max_args, bool compute_resulting_deps) {
+    expr type = m_ctx.relaxed_try_to_pi(m_ctx.infer(fn));
     buffer<expr> locals;
+    unsigned i = 0;
     while (is_pi(type)) {
+        if (i == max_args)
+            break;
         expr local      = m_ctx.mk_tmp_local_from_binding(type);
         expr local_type = m_ctx.infer(local);
         expr new_type   = m_ctx.relaxed_try_to_pi(instantiate(binding_body(type), local));
+        bool spec       = false;
         bool is_prop    = m_ctx.is_prop(local_type);
         bool is_sub     = is_prop;
         bool is_dep     = !closed(binding_body(type));
@@ -50,134 +72,176 @@ auto fun_info_manager::get(expr const & e) -> fun_info {
             // TODO(Leo): check if the following line is a performance bottleneck.
             is_sub = static_cast<bool>(m_ctx.mk_subsingleton_instance(local_type));
         }
-        info.emplace_back(binding_info(type).is_implicit(),
-                          binding_info(type).is_inst_implicit(),
-                          is_prop, is_sub, is_dep, collect_deps(local_type, locals));
+        pinfos.emplace_back(spec,
+                            binding_info(type).is_implicit(),
+                            binding_info(type).is_inst_implicit(),
+                            is_prop, is_sub, is_dep, collect_deps(local_type, locals));
         locals.push_back(local);
         type = new_type;
+        i++;
     }
-    fun_info r(info.size(), to_list(info), collect_deps(type, locals));
-    m_fun_info.insert(e, r);
+    if (compute_resulting_deps)
+        return collect_deps(type, locals);
+    else
+        return list<unsigned>();
+}
+
+fun_info fun_info_manager::get(expr const & e) {
+    auto it = m_cache_get.find(e);
+    if (it != m_cache_get.end())
+        return it->second;
+    buffer<param_info> pinfos;
+    auto result_deps = get_core(e, pinfos, std::numeric_limits<unsigned>::max(), true);
+    fun_info r(pinfos.size(), to_list(pinfos), result_deps);
+    m_cache_get.insert(mk_pair(e, r));
     return r;
 }
 
-auto fun_info_manager::get(expr const & e, unsigned nargs) -> fun_info {
-    auto r = get(e);
-    lean_assert(nargs <= r.get_arity());
-    if (nargs == r.get_arity()) {
-        return r;
-    } else {
-        buffer<param_info> pinfos;
-        to_buffer(r.get_params_info(), pinfos);
-        buffer<unsigned> rdeps;
-        to_buffer(r.get_dependencies(), rdeps);
-        for (unsigned i = nargs; i < pinfos.size(); i++) {
-            for (auto d : pinfos[i].get_dependencies()) {
-                if (std::find(rdeps.begin(), rdeps.end(), d) == rdeps.end())
-                    rdeps.push_back(d);
-            }
+fun_info fun_info_manager::get(expr const & e, unsigned nargs) {
+    expr_unsigned key(e, nargs);
+    auto it = m_cache_get_nargs.find(key);
+    if (it != m_cache_get_nargs.end())
+        return it->second;
+    buffer<param_info> pinfos;
+    auto result_deps = get_core(e, pinfos, nargs, true);
+    fun_info r(pinfos.size(), to_list(pinfos), result_deps);
+    m_cache_get_nargs.insert(mk_pair(key, r));
+    return r;
+}
+
+/* Return true if there is j s.t. pinfos[j] is not a
+   proposition/subsingleton and it dependends of argument i */
+static bool has_nonprop_nonsubsingleton_fwd_dep(unsigned i, buffer<param_info> const & pinfos) {
+    for (unsigned j = i+1; j < pinfos.size(); j++) {
+        param_info const & fwd_pinfo = pinfos[j];
+        if (fwd_pinfo.is_prop() || fwd_pinfo.is_subsingleton())
+            continue;
+        auto const & fwd_deps        = fwd_pinfo.get_dependencies();
+        if (std::find(fwd_deps.begin(), fwd_deps.end(), i) != fwd_deps.end()) {
+            return true;
         }
-        pinfos.shrink(nargs);
-        return fun_info(nargs, to_list(pinfos), to_list(rdeps));
+    }
+    return false;
+}
+
+void fun_info_manager::trace_if_unsupported(expr const & fn, buffer<expr> const & args, unsigned prefix_sz, fun_info const & result) {
+    if (!is_fun_info_trace_enabled())
+        return;
+    fun_info info = get(fn, args.size());
+    buffer<param_info> pinfos;
+    to_buffer(info.get_params_info(), pinfos);
+    /* Check if all remaining arguments are nondependent or
+       dependent (but all forward dependencies are propositions or subsingletons) */
+    unsigned i = prefix_sz;
+    for (; i < pinfos.size(); i++) {
+        param_info const & pinfo = pinfos[i];
+        if (!pinfo.is_dep())
+            continue; /* nondependent argument */
+        if (has_nonprop_nonsubsingleton_fwd_dep(i, pinfos))
+            break; /* failed i-th argument has a forward dependent that is not a prop nor a subsingleton */
+    }
+    if (i == pinfos.size())
+        return; // It is *cheap* case
+
+    /* Expensive case */
+    /* We generate a trace message IF it would be possible to compute more precise information.
+       That is, there is an argument that is a proposition and/or subsingleton, but
+       the corresponding pinfo is not a marked a prop/subsingleton.
+    */
+    i = 0;
+    for (param_info const & pinfo : result.get_params_info()) {
+        if (pinfo.is_prop() || pinfo.is_subsingleton())
+            continue;
+        expr arg_type = m_ctx.infer(args[i]);
+        if (m_ctx.is_prop(arg_type) || m_ctx.mk_subsingleton_instance(arg_type)) {
+            lean_trace_fun_info(
+                tout() << "approximating function information for '" << fn
+                << "', this may affect the effectiveness of the simplifier and congruence closure modules, "
+                << "more precise information can be efficiently computed if all parameters are moved to the beginning of the function\n";);
+            return;
+        }
+        i++;
     }
 }
 
-struct replace_fn : public replace_visitor {
-    fun_info_manager & m_infom;
-    type_context &     m_ctx;
-    unsigned           m_num;
-    expr const *       m_from;
-    expr const *       m_to;
+unsigned fun_info_manager::get_specialization_prefix_size(expr const & fn, unsigned nargs) {
+    /*
+      We say a function is "cheap" if it is of the form:
 
-    struct failed {};
+      a) 0 or more dependent parameters p s.t. there is at least one forward dependency x : C[p]
+         which is not a proposition nor a subsingleton.
 
-    replace_fn(fun_info_manager & infom, unsigned n, expr const * ts, expr const * rs):
-        m_infom(infom), m_ctx(infom.ctx()), m_num(n), m_from(ts), m_to(rs) {}
+      b) followed by 0 or more nondependent parameter and/or a dependent parameter
+      s.t. all forward dependencies are propositions and subsingletons.
 
-    virtual expr visit(expr const & e) {
-        for (unsigned i = 0; i < m_num; i++) {
-            if (e == m_from[i])
-                return m_to[i];
-        }
-        return replace_visitor::visit(e);
+      We have a caching mechanism for the "cheap" case.
+      The cheap case cover many commonly used functions
+
+        eq  : Pi {A : Type} (x y : A), Prop
+        add : Pi {A : Type} [s : has_add A] (x y : A), A
+        inv : Pi {A : Type} [s : has_inv A] (x : A) (h : invertible x), A
+
+      but it doesn't cover
+
+         p : Pi {A : Type} (x : A) {B : Type} (y : B), Prop
+
+      I don't think this is a big deal since we can write it as:
+
+         p : Pi {A : Type} {B : Type} (x : A) (y : B), Prop
+
+      Therefore, we ignore the non-cheap cases, and pretend they are "cheap".
+      If tracing is enabled, we produce a tracing message whenever we find
+      a non-cheap case.
+
+      This procecure returns the size of group a)
+    */
+    expr_unsigned key(fn, nargs);
+    auto it = m_cache_prefix.find(key);
+    if (it != m_cache_prefix.end())
+        return it->second;
+    fun_info info = get(fn, nargs);
+    buffer<param_info> pinfos;
+    to_buffer(info.get_params_info(), pinfos);
+    /* Compute "prefix": 0 or more parameters s.t.
+       at lest one forward dependency is not a proposition or a subsingleton */
+    unsigned i = 0;
+    for (; i < pinfos.size(); i++) {
+        param_info const & pinfo = pinfos[i];
+        if (!pinfo.is_dep())
+            break;
+        /* search for forward dependency that is not a proposition nor a subsingleton */
+        if (!has_nonprop_nonsubsingleton_fwd_dep(i, pinfos))
+            break;
     }
+    unsigned prefix_sz = i;
+    m_cache_prefix.insert(mk_pair(key, prefix_sz));
+    return prefix_sz;
+}
 
-    virtual expr visit_mlocal(expr const & e) {
-        return e;
+fun_info fun_info_manager::get_specialized(expr const & a) {
+    lean_assert(is_app(a));
+    buffer<expr> args;
+    expr const & fn        = get_app_args(a, args);
+    unsigned prefix_sz     = get_specialization_prefix_size(fn, args.size());
+    unsigned num_rest_args = args.size() - prefix_sz;
+    expr g = a;
+    for (unsigned i = 0; i < num_rest_args; i++)
+        g = app_fn(g);
+    expr_unsigned key(g, num_rest_args);
+    auto it = m_cache_get_spec.find(key);
+    if (it != m_cache_get_spec.end()) {
+        return it->second;
     }
-
-    virtual expr visit_binding(expr const & b) {
-        expr new_domain = visit(binding_domain(b));
-        expr l          = m_ctx.mk_tmp_local(binding_name(b), new_domain, binding_info(b));
-        expr new_body   = abstract(visit(instantiate(binding_body(b), l)), l);
-        return update_binding(b, new_domain, new_body);
+    /* fun_info is not cached */
+    buffer<param_info> pinfos;
+    get_core(fn, pinfos, prefix_sz, false);
+    for (unsigned i = 0; i < prefix_sz; i++) {
+        pinfos[i].m_specialized = true;
     }
-
-    virtual expr visit_app(expr const & e) {
-        buffer<expr> args;
-        expr f        = get_app_args(e, args);
-        expr new_f    = visit(f);
-        fun_info info = m_infom.get(f);
-        if (info.get_arity() < args.size())
-            throw failed();
-        auto ps_info  = info.get_params_info();
-        bool modified = f != new_f;
-        buffer<expr> new_args;
-        buffer<bool> to_check;
-        bool has_to_check = false;
-        for (expr const & arg : args) {
-            expr new_arg = visit(arg);
-            auto pinfo   = head(ps_info);
-            bool c       = false;
-            if (modified) {
-                // if not argument has been modified, then there is nothing to be checked
-                for (unsigned idx : pinfo.get_dependencies()) {
-                    lean_assert(idx < new_args.size());
-                    if (args[idx] != new_args[idx]) {
-                        c = true;
-                        has_to_check = true;
-                        break;
-                    }
-                }
-            }
-            if (new_arg != arg) {
-                modified = true;
-            }
-            to_check.push_back(c);
-            new_args.push_back(new_arg);
-            ps_info      = tail(ps_info);
-        }
-        lean_assert(args.size() == new_args.size());
-        if (!modified)
-            return e;
-        expr new_e = mk_app(new_f, new_args);
-        if (has_to_check) {
-            lean_assert(to_check.size() == new_args.size());
-            expr it    = new_e;
-            unsigned i = to_check.size();
-            while (i > 0) {
-                --i;
-                expr const & fn = app_fn(it);
-                if (to_check[i]) {
-                    expr fn_type  = m_ctx.whnf(m_ctx.infer(fn));
-                    if (!is_pi(fn_type))
-                        throw failed();
-                    expr arg_type = m_ctx.infer(app_arg(it));
-                    if (!m_ctx.is_def_eq(binding_domain(fn_type), arg_type))
-                        throw failed();
-                }
-                it = fn;
-            }
-        }
-        return new_e;
-    }
-};
-
-optional<expr> replace(fun_info_manager & infom, expr const & e, unsigned n, expr const * ts, expr const * rs) {
-    try {
-        return some_expr(replace_fn(infom, n, ts, rs)(e));
-    } catch (replace_fn::failed &) {
-        return none_expr();
-    }
+    auto result_deps = get_core(g, pinfos, num_rest_args, true);
+    fun_info r(pinfos.size(), to_list(pinfos), result_deps);
+    m_cache_get_spec.insert(mk_pair(key, r));
+    trace_if_unsupported(fn, args, prefix_sz, r);
+    return r;
 }
 }

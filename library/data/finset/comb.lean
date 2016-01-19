@@ -20,7 +20,8 @@ definition image (f : A → B) (s : finset A) : finset B :=
 quot.lift_on s
   (λ l, to_finset (list.map f (elt_of l)))
   (λ l₁ l₂ p, quot.sound (perm_erase_dup_of_perm (perm_map _ p)))
-notation [priority finset.prio] f `'[`:max a `]` := image f a
+
+infix [priority finset.prio] `'` := image
 
 theorem image_empty (f : A → B) : image f ∅ = ∅ :=
 rfl
@@ -87,9 +88,9 @@ ext (take z, iff.intro
     obtain x (Hx : x ∈ s) (Hgx : g x = y), from exists_of_mem_image Hy,
     mem_image Hx (by esimp; rewrite [Hgx, Hfy])))
 
-lemma image_subset {a b : finset A} (f : A → B) (H : a ⊆ b) : f '[a] ⊆ f '[b] :=
+lemma image_subset {a b : finset A} (f : A → B) (H : a ⊆ b) : f ' a ⊆ f ' b :=
 subset_of_forall
-  (take y, assume Hy : y ∈ f '[a],
+  (take y, assume Hy : y ∈ f ' a,
     obtain x (Hx₁ : x ∈ a) (Hx₂ : f x = y), from exists_of_mem_image Hy,
     mem_image (mem_of_subset_of_mem H Hx₁) Hx₂)
 
@@ -167,9 +168,6 @@ ext (take x, iff.intro
   (suppose x ∈ s, mem_sep_of_mem (mem_of_subset_of_mem ssubt this) this)
   (suppose x ∈ {x ∈ t | x ∈ s}, of_mem_sep this))
 
-theorem mem_singleton_eq' (x a : A) : x ∈ '{a} = (x = a) :=
-by rewrite [mem_insert_eq, mem_empty_eq, or_false]
-
 end
 
 /- set difference -/
@@ -209,7 +207,7 @@ ext (take x, iff.intro
       (suppose x ∉ s, mem_union_right _ (mem_diff `x ∈ t` this))))
 
 theorem diff_union_cancel {s t : finset A} (H : s ⊆ t) : (t \ s) ∪ s = t :=
-eq.subst !union.comm (!union_diff_cancel H)
+eq.subst !union_comm (!union_diff_cancel H)
 end diff
 
 /- set complement -/
@@ -417,7 +415,7 @@ perm.induction_on p
   rfl
   (λ x l₁ l₂ p ih, by rewrite [↑list_powerset, ih])
   (λ x y l, by rewrite [↑list_powerset, ↑list_powerset, *image_union, image_insert_comm,
-                        *union.assoc, union.left_comm (finset.image (finset.insert x) _)])
+                        *union_assoc, union_left_comm (finset.image (finset.insert x) _)])
   (λ l₁ l₂ l₃ p₁ p₂ r₁ r₂, eq.trans r₁ r₂)
 
 definition powerset (s : finset A) : finset (finset A) :=
@@ -444,7 +442,7 @@ begin
   induction s with a s nains ih,
     intro x,
     rewrite powerset_empty,
-    show x ∈ '{∅} ↔ x ⊆ ∅, by rewrite [mem_singleton_eq', subset_empty_iff],
+    show x ∈ '{∅} ↔ x ⊆ ∅, by rewrite [mem_singleton_iff, subset_empty_iff],
   intro x,
     rewrite [powerset_insert nains, mem_union_iff, ih, mem_image_iff],
     exact

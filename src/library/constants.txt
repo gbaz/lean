@@ -13,6 +13,9 @@ bit1
 bool
 bool.ff
 bool.tt
+cast
+cast_eq
+cast_heq
 char
 char.mk
 classical
@@ -39,6 +42,8 @@ eq.refl
 eq.subst
 eq.symm
 eq.trans
+eq_of_heq
+eq_rec_heq
 exists.elim
 false
 false_of_true_iff_false
@@ -56,7 +61,9 @@ has_zero
 has_zero.zero
 heq
 heq.refl
-heq.to_eq
+heq.symm
+heq.trans
+heq_of_eq
 iff
 iff.elim_left
 iff.elim_right
@@ -187,6 +194,7 @@ string.str
 sub
 subsingleton
 subsingleton.elim
+subsingleton.helim
 tactic
 tactic.all_goals
 tactic.and_then

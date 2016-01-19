@@ -12,6 +12,7 @@ Author: Leonardo de Moura
 #include "library/constants.h"
 #include "library/replace_visitor.h"
 #include "library/relation_manager.h"
+#include "library/expr_unsigned_map.h"
 #include "library/congr_lemma_manager.h"
 
 namespace lean {
@@ -24,28 +25,15 @@ struct congr_lemma_manager::imp {
     app_builder &      m_builder;
     fun_info_manager & m_fmanager;
     type_context &     m_ctx;
-    struct key {
-        expr         m_fn;
-        unsigned     m_nargs;
-        unsigned     m_hash;
-        key(expr const & fn, unsigned nargs):
-            m_fn(fn), m_nargs(nargs), m_hash(hash(m_fn.hash(), m_nargs)) {}
-    };
-
-    struct key_hash_fn {
-        unsigned operator()(key const & k) const { return k.m_hash; }
-    };
-
-    struct key_eq_fn {
-        bool operator()(key const & k1, key const & k2) const {
-            return k1.m_fn == k2.m_fn && k1.m_nargs == k2.m_nargs;
-        }
-    };
-
-    std::unordered_map<key, result, key_hash_fn, key_eq_fn> m_simp_cache;
-    std::unordered_map<key, result, key_hash_fn, key_eq_fn> m_cache;
-    std::unordered_map<key, result, key_hash_fn, key_eq_fn> m_rel_cache[2];
-    relation_info_getter                                    m_relation_info_getter;
+    typedef expr_unsigned key;
+    typedef expr_unsigned_map<result>  cache;
+    cache                m_simp_cache;
+    cache                m_simp_cache_spec;
+    cache                m_cache;
+    cache                m_cache_spec;
+    cache                m_hcache;
+    cache                m_rel_cache[2];
+    relation_info_getter m_relation_info_getter;
 
     expr infer(expr const & e) { return m_ctx.infer(e); }
     expr whnf(expr const & e) { return m_ctx.whnf(e); }
@@ -99,8 +87,11 @@ struct congr_lemma_manager::imp {
         return std::find(kinds.begin(), kinds.end(), congr_arg_kind::Cast) != kinds.end();
     }
 
+    /** \brief Create simple congruence theorem using just congr, congr_arg, and congr_fun lemmas.
+        \pre There are no "cast" arguments. */
     expr mk_simple_congr_proof(expr const & fn, buffer<expr> const & lhss,
                                buffer<optional<expr>> const & eqs, buffer<congr_arg_kind> const & kinds) {
+        lean_assert(!has_cast(kinds));
         unsigned i = 0;
         for (; i < kinds.size(); i++) {
             if (kinds[i] != congr_arg_kind::Fixed)
@@ -124,6 +115,9 @@ struct congr_lemma_manager::imp {
         return pr;
     }
 
+    /** \brief Given a the set of hypotheses \c eqs, build a proof for <tt>lhs = rhs</tt> using \c eq.drec and \c eqs.
+        \remark eqs are the proofs for the Eq arguments.
+        \remark This is an auxiliary method used by mk_congr_simp. */
     expr mk_congr_proof(unsigned i, expr const & lhs, expr const & rhs, buffer<optional<expr>> const & eqs) {
         if (i == eqs.size()) {
             return m_builder.mk_eq_refl(rhs);
@@ -156,6 +150,12 @@ struct congr_lemma_manager::imp {
                    << " failed to build proof (enable 'trace.app_builder' for details\n";);
     }
 
+    /** \brief Create a congruence lemma that is useful for the simplifier.
+        In this kind of lemma, if the i-th argument is a Cast argument, then the lemma
+        contains an input a_i representing the i-th argument in the left-hand-side, and
+        it appears with a cast (e.g., eq.drec ... a_i ...) in the right-hand-side.
+        The idea is that the right-hand-side of this lemma "tells" the simplifier
+        how the resulting term looks like. */
     optional<result> mk_congr_simp(expr const & fn, buffer<param_info> const & pinfos, buffer<congr_arg_kind> const & kinds) {
         try {
             expr fn_type = relaxed_whnf(infer(fn));
@@ -183,9 +183,14 @@ struct congr_lemma_manager::imp {
                     hyps.push_back(eq);
                     break;
                 }
+                case congr_arg_kind::HEq:
+                    lean_unreachable();
                 case congr_arg_kind::Fixed:
                     rhss.push_back(lhs);
                     eqs.push_back(none_expr());
+                    break;
+                case congr_arg_kind::FixedNoParam:
+                    lean_unreachable(); // TODO(Leo): not implemented yet
                     break;
                 case congr_arg_kind::Cast: {
                     expr rhs_type = mlocal_type(lhs);
@@ -215,6 +220,13 @@ struct congr_lemma_manager::imp {
         }
     }
 
+    /** \brief Create a congruence lemma for the congruence closure module.
+        In this kind of lemma, if the i-th argument is a Cast argument, then the lemma
+        contains two inputs a_i and b_i representing the i-th argument in the left-hand-side and
+        right-hand-side.
+        This lemma is based on the congruence lemma for the simplifier.
+        It uses subsinglenton elimination to show that the congr-simp lemma right-hand-side
+        is equal to the right-hand-side of this lemma. */
     optional<result> mk_congr(expr const & fn, optional<result> const & simp_lemma,
                               buffer<param_info> const & pinfos, buffer<congr_arg_kind> const & kinds) {
         try {
@@ -250,10 +262,15 @@ struct congr_lemma_manager::imp {
                     simp_lemma_args.push_back(eq);
                     break;
                 }
+                case congr_arg_kind::HEq:
+                    lean_unreachable();
                 case congr_arg_kind::Fixed:
                     rhs = lhs;
                     rhss.push_back(rhs);
                     eqs.push_back(none_expr());
+                    break;
+                case congr_arg_kind::FixedNoParam:
+                    lean_unreachable(); // TODO(Leo): not implemented yet
                     break;
                 case congr_arg_kind::Cast: {
                     rhs     = m_ctx.mk_tmp_local(binding_name(fn_type2), binding_domain(fn_type2));
@@ -288,7 +305,7 @@ struct congr_lemma_manager::imp {
                 return optional<result>(congr_type, congr_proof, to_list(kinds));
             }
             buffer<expr> rhss1;
-            get_app_args(rhs1, rhss1);
+            get_app_args_at_most(rhs1, rhss.size(), rhss1);
             lean_assert(rhss.size() == rhss1.size());
             expr a   = mk_app(fn, i, rhss1.data());
             expr pr2 = m_builder.mk_eq_refl(a);
@@ -311,24 +328,11 @@ struct congr_lemma_manager::imp {
         }
     }
 
-public:
-    imp(app_builder & b, fun_info_manager & fm):
-        m_builder(b), m_fmanager(fm), m_ctx(fm.ctx()),
-        m_relation_info_getter(mk_relation_info_getter(fm.ctx().env())) {}
-
-    type_context & ctx() { return m_ctx; }
-
-    optional<result> mk_congr_simp(expr const & fn) {
-        fun_info finfo = m_fmanager.get(fn);
-        return mk_congr_simp(fn, finfo.get_arity());
-    }
-
-    optional<result> mk_congr_simp(expr const & fn, unsigned nargs) {
+    optional<result> mk_congr_simp(expr const & fn, unsigned nargs, fun_info const & finfo) {
         auto r = m_simp_cache.find(key(fn, nargs));
         if (r != m_simp_cache.end())
             return optional<result>(r->second);
-        fun_info finfo = m_fmanager.get(fn, nargs);
-        list<unsigned> const & result_deps = finfo.get_dependencies();
+        list<unsigned> const & result_deps = finfo.get_result_dependencies();
         buffer<congr_arg_kind> kinds;
         buffer<param_info>     pinfos;
         to_buffer(finfo.get_params_info(), pinfos);
@@ -381,16 +385,10 @@ public:
         }
     }
 
-    optional<result> mk_congr(expr const & fn) {
-        fun_info finfo = m_fmanager.get(fn);
-        return mk_congr(fn, finfo.get_arity());
-    }
-
-    optional<result> mk_congr(expr const & fn, unsigned nargs) {
+    optional<result> mk_congr(expr const & fn, unsigned nargs, fun_info const & finfo) {
         auto r = m_cache.find(key(fn, nargs));
         if (r != m_cache.end())
             return optional<result>(r->second);
-        fun_info finfo = m_fmanager.get(fn, nargs);
         optional<result> simp_lemma = mk_congr_simp(fn, nargs);
         if (!simp_lemma)
             return optional<result>();
@@ -422,6 +420,187 @@ public:
         return new_r;
     }
 
+    void pre_specialize(expr const & a, expr & g, unsigned & prefix_sz, unsigned & num_rest_args) {
+        fun_info finfo = m_fmanager.get_specialized(a);
+        prefix_sz = 0;
+        for (param_info const & pinfo : finfo.get_params_info()) {
+            if (!pinfo.specialized())
+                break;
+            prefix_sz++;
+        }
+        num_rest_args = finfo.get_arity() - prefix_sz;
+        g = a;
+        for (unsigned i = 0; i < num_rest_args; i++) {
+            g = app_fn(g);
+        }
+    }
+
+    result mk_specialize_result(result const & r, unsigned prefix_sz) {
+        list<congr_arg_kind> new_arg_kinds = r.get_arg_kinds();
+        for (unsigned i = 0; i < prefix_sz; i++)
+            new_arg_kinds = cons(congr_arg_kind::FixedNoParam, new_arg_kinds);
+        return result(r.get_type(), r.get_proof(), new_arg_kinds);
+    }
+
+    expr mk_hcongr_proof(expr type) {
+        expr A, B, a, b;
+        if (is_eq(type, a, b)) {
+            return m_builder.mk_eq_refl(a);
+        } else if (is_heq(type, A, a, B, b)) {
+            return m_builder.mk_heq_refl(a);
+        } else {
+            lean_assert(is_pi(type) && is_pi(binding_body(type)) && is_pi(binding_body(binding_body(type))));
+            expr a      = m_ctx.mk_tmp_local(binding_name(type), binding_domain(type));
+            type        = instantiate(binding_body(type), a);
+            expr b      = m_ctx.mk_tmp_local(binding_name(type), binding_domain(type));
+            expr motive = instantiate(binding_body(type), b);
+            type        = instantiate(binding_body(type), a);
+            expr eq_pr  = m_ctx.mk_tmp_local(binding_name(motive), binding_domain(motive));
+            type        = binding_body(type);
+            motive      = binding_body(motive);
+            lean_assert(closed(type) && closed(motive));
+            expr minor  = mk_hcongr_proof(type);
+            expr major  = eq_pr;
+            if (is_heq(mlocal_type(eq_pr)))
+                major  = m_builder.mk_eq_of_heq(eq_pr);
+            motive      = Fun(b, motive);
+            return Fun({a, b, eq_pr}, m_builder.mk_eq_rec(motive, minor, major));
+        }
+    }
+
+    optional<result> mk_hcongr_core(expr const & fn, unsigned nargs) {
+        try {
+            expr fn_type_lhs = relaxed_whnf(infer(fn));
+            expr fn_type_rhs = fn_type_lhs;
+            name e_name("e");
+            buffer<expr> lhss;
+            buffer<expr> rhss;
+            buffer<expr> eqs;
+            buffer<expr> hyps;    // contains lhss + rhss + eqs
+            buffer<congr_arg_kind> kinds;
+            for (unsigned i = 0; i < nargs; i++) {
+                if (!is_pi(fn_type_lhs)) {
+                    trace_too_many_arguments(fn, nargs);
+                    return optional<result>();
+                }
+                expr lhs = m_ctx.mk_tmp_local(binding_name(fn_type_lhs), binding_domain(fn_type_lhs));
+                lhss.push_back(lhs); hyps.push_back(lhs);
+                expr rhs = m_ctx.mk_tmp_local(binding_name(fn_type_rhs).append_after("'"), binding_domain(fn_type_rhs));
+                rhss.push_back(rhs); hyps.push_back(rhs);
+                expr eq_type;
+                if (binding_domain(fn_type_lhs) == binding_domain(fn_type_rhs)) {
+                    eq_type = m_builder.mk_eq(lhs, rhs);
+                    kinds.push_back(congr_arg_kind::Eq);
+                } else {
+                    eq_type = m_builder.mk_heq(lhs, rhs);
+                    kinds.push_back(congr_arg_kind::HEq);
+                }
+                expr h_eq = m_ctx.mk_tmp_local(e_name.append_after(i), eq_type);
+                eqs.push_back(h_eq); hyps.push_back(h_eq);
+                fn_type_lhs  = relaxed_whnf(instantiate(binding_body(fn_type_lhs), lhs));
+                fn_type_rhs  = relaxed_whnf(instantiate(binding_body(fn_type_rhs), rhs));
+            }
+            expr lhs = mk_app(fn, lhss);
+            expr rhs = mk_app(fn, rhss);
+            expr eq_type;
+            if (fn_type_lhs == fn_type_rhs) {
+                eq_type = m_builder.mk_eq(lhs, rhs);
+            } else {
+                eq_type = m_builder.mk_heq(lhs, rhs);
+            }
+            expr result_type  = Pi(hyps, eq_type);
+            expr result_proof = mk_hcongr_proof(result_type);
+            return optional<result>(result_type, result_proof, to_list(kinds));
+        } catch (app_builder_exception &) {
+            trace_app_builder_failure(fn);
+            return optional<result>();
+        }
+    }
+
+public:
+    imp(app_builder & b, fun_info_manager & fm):
+        m_builder(b), m_fmanager(fm), m_ctx(fm.ctx()),
+        m_relation_info_getter(mk_relation_info_getter(fm.ctx().env())) {}
+
+    type_context & ctx() { return m_ctx; }
+
+    optional<result> mk_congr_simp(expr const & fn, unsigned nargs) {
+        fun_info finfo = m_fmanager.get(fn, nargs);
+        return mk_congr_simp(fn, nargs, finfo);
+    }
+
+    optional<result> mk_congr_simp(expr const & fn) {
+        fun_info finfo = m_fmanager.get(fn);
+        return mk_congr_simp(fn, finfo.get_arity(), finfo);
+    }
+
+    optional<result> mk_specialized_congr_simp(expr const & a) {
+        lean_assert(is_app(a));
+        expr g; unsigned prefix_sz, num_rest_args;
+        pre_specialize(a, g, prefix_sz, num_rest_args);
+        key k(g, num_rest_args);
+        auto it = m_simp_cache_spec.find(k);
+        if (it != m_simp_cache_spec.end())
+            return optional<result>(it->second);
+        auto r = mk_congr_simp(g, num_rest_args);
+        if (!r)
+            return optional<result>();
+        result new_r = mk_specialize_result(*r, prefix_sz);
+        m_simp_cache_spec.insert(mk_pair(k, new_r));
+        return optional<result>(new_r);
+    }
+
+    optional<result> mk_congr(expr const & fn, unsigned nargs) {
+        fun_info finfo = m_fmanager.get(fn, nargs);
+        return mk_congr(fn, nargs, finfo);
+    }
+
+    optional<result> mk_congr(expr const & fn) {
+        fun_info finfo = m_fmanager.get(fn);
+        return mk_congr(fn, finfo.get_arity(), finfo);
+    }
+
+    optional<result> mk_specialized_congr(expr const & a) {
+        lean_assert(is_app(a));
+        expr g; unsigned prefix_sz, num_rest_args;
+        pre_specialize(a, g, prefix_sz, num_rest_args);
+        key k(g, num_rest_args);
+        auto it = m_cache_spec.find(k);
+        if (it != m_cache_spec.end())
+            return optional<result>(it->second);
+        auto r = mk_congr(g, num_rest_args);
+        if (!r) {
+            return optional<result>();
+        }
+        result new_r = mk_specialize_result(*r, prefix_sz);
+        m_cache_spec.insert(mk_pair(k, new_r));
+        return optional<result>(new_r);
+    }
+
+    optional<result> mk_hcongr(expr const & fn, unsigned nargs) {
+        auto r = m_hcache.find(key(fn, nargs));
+        if (r != m_hcache.end())
+            return optional<result>(r->second);
+        auto new_r = mk_hcongr_core(fn, nargs);
+        if (new_r)
+            m_hcache.insert(mk_pair(key(fn, nargs), *new_r));
+        return new_r;
+    }
+
+    optional<result> mk_hcongr(expr const & fn) {
+        fun_info finfo = m_fmanager.get(fn);
+        return mk_hcongr(fn, finfo.get_arity());
+    }
+
+    /** \brief Given an equivalence relation \c R, create the congruence lemma
+
+            forall a1 a2 b1 b2, R a1 a2 -> R b1 b2 -> (R a1 b1 <-> R a2 b2)
+
+        If is_iff == false, then, it creates the lemma
+
+            forall a1 a2 b1 b2, R a1 a2 -> R b1 b2 -> (R a1 b1 = R a2 b2)
+
+        Propositional extensionality is used when is_iff == false */
     optional<result> mk_rel_congr(expr const & R, bool is_iff) {
         try {
             if (!is_constant(R))
@@ -502,6 +681,10 @@ public:
     optional<result> mk_rel_eq_congr(expr const & R) {
         return mk_rel_congr(R, false);
     }
+
+    unsigned get_specialization_prefix_size(expr const & fn, unsigned nargs) {
+        return m_fmanager.get_specialization_prefix_size(fn, nargs);
+    }
 };
 
 congr_lemma_manager::congr_lemma_manager(app_builder & b, fun_info_manager & fm):
@@ -519,19 +702,32 @@ auto congr_lemma_manager::mk_congr_simp(expr const & fn) -> optional<result> {
 auto congr_lemma_manager::mk_congr_simp(expr const & fn, unsigned nargs) -> optional<result> {
     return m_ptr->mk_congr_simp(fn, nargs);
 }
+auto congr_lemma_manager::mk_specialized_congr_simp(expr const & a) -> optional<result> {
+    return m_ptr->mk_specialized_congr_simp(a);
+}
 auto congr_lemma_manager::mk_congr(expr const & fn) -> optional<result> {
     return m_ptr->mk_congr(fn);
 }
 auto congr_lemma_manager::mk_congr(expr const & fn, unsigned nargs) -> optional<result> {
     return m_ptr->mk_congr(fn, nargs);
 }
-
+auto congr_lemma_manager::mk_specialized_congr(expr const & fn) -> optional<result> {
+    return m_ptr->mk_specialized_congr(fn);
+}
+auto congr_lemma_manager::mk_hcongr(expr const & fn) -> optional<result> {
+    return m_ptr->mk_hcongr(fn);
+}
+auto congr_lemma_manager::mk_hcongr(expr const & fn, unsigned nargs) -> optional<result> {
+    return m_ptr->mk_hcongr(fn, nargs);
+}
 auto congr_lemma_manager::mk_rel_iff_congr(expr const & R) -> optional<result> {
     return m_ptr->mk_rel_iff_congr(R);
 }
-
 auto congr_lemma_manager::mk_rel_eq_congr(expr const & R) -> optional<result> {
     return m_ptr->mk_rel_eq_congr(R);
+}
+unsigned congr_lemma_manager::get_specialization_prefix_size(expr const & fn, unsigned nargs) {
+    return m_ptr->get_specialization_prefix_size(fn, nargs);
 }
 
 void initialize_congr_lemma_manager() {

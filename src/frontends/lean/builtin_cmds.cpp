@@ -22,8 +22,6 @@ Author: Leonardo de Moura
 #include "library/pp_options.h"
 #include "library/aux_recursors.h"
 #include "library/private.h"
-#include "library/decl_stats.h"
-#include "library/meng_paulson.h"
 #include "library/fun_info_manager.h"
 #include "library/congr_lemma_manager.h"
 #include "library/abstract_expr_manager.h"
@@ -329,6 +327,7 @@ environment open_export_cmd(parser & p, bool open) {
             env = export_namespace(env, p.ios(), ns, metacls);
         if (decls) {
             // Remark: we currently to not allow renaming and hiding of universe levels
+            env = mark_namespace_as_open(env, ns);
             buffer<name> exceptions;
             bool found_explicit = false;
             while (p.curr_is_token(get_lparen_tk())) {
@@ -536,7 +535,7 @@ static environment accessible_cmd(parser & p) {
             name const & n = d.get_name();
             total++;
             if ((d.is_theorem() || d.is_definition()) &&
-                !is_instance(env, n) && !is_simp_rule(env, n) && !is_congr_rule(env, n) &&
+                !is_instance(env, n) && !is_simp_lemma(env, n) && !is_congr_lemma(env, n) &&
                 !is_user_defined_recursor(env, n) && !is_aux_recursor(env, n) &&
                 !is_projection(env, n) && !is_private(env, n) &&
                 !is_user_defined_recursor(env, n) && !is_aux_recursor(env, n) &&
@@ -548,54 +547,6 @@ static environment accessible_cmd(parser & p) {
             }
         });
     p.regular_stream() << "total: " << total << ", accessible: " << accessible << ", accessible theorems: " << accessible_theorems << "\n";
-    return env;
-}
-
-static void display_name_set(parser & p, name const & n, name_set const & s) {
-    if (s.empty())
-        return;
-    io_state_stream out = p.regular_stream();
-    out << "  " << n << " := {";
-    bool first = true;
-    s.for_each([&](name const & n2) {
-            if (is_private(p.env(), n2))
-                return;
-            if (first)
-                first = false;
-            else
-                out << ", ";
-            out << n2;
-        });
-    out << "}\n";
-}
-
-static environment decl_stats_cmd(parser & p) {
-    environment const & env = p.env();
-    io_state_stream out = p.regular_stream();
-    out << "Use sets\n";
-    env.for_each_declaration([&](declaration const & d) {
-            if ((d.is_theorem() || d.is_axiom()) && !is_private(env, d.get_name()))
-                display_name_set(p, d.get_name(), get_use_set(env, d.get_name()));
-        });
-    out << "Used-by sets\n";
-    env.for_each_declaration([&](declaration const & d) {
-            if (!d.is_theorem() && !d.is_axiom() && !is_private(env, d.get_name()))
-                display_name_set(p, d.get_name(), get_used_by_set(env, d.get_name()));
-        });
-    return env;
-}
-
-static environment relevant_thms_cmd(parser & p) {
-    environment const & env = p.env();
-    name_set R;
-    while (p.curr_is_identifier()) {
-        R.insert(p.check_constant_next("invalid #relevant_thms command, constant expected"));
-    }
-    name_set TS = get_relevant_thms(env, p.get_options(), R);
-    io_state_stream out = p.regular_stream();
-    TS.for_each([&](name const & T) {
-            out << T << "\n";
-        });
     return env;
 }
 
@@ -704,41 +655,6 @@ static environment trans_cmd(parser & p) {
     return env;
 }
 
-static void parse_expr_vector(parser & p, buffer<expr> & r) {
-    p.check_token_next(get_lbracket_tk(), "invalid command, '[' expected");
-    while (true) {
-        expr e; level_param_names ls;
-        std::tie(e, ls) = parse_local_expr(p);
-        r.push_back(e);
-        if (!p.curr_is_token(get_comma_tk()))
-            break;
-        p.next();
-    }
-    p.check_token_next(get_rbracket_tk(), "invalid command, ']' expected");
-}
-
-static environment replace_cmd(parser & p) {
-    environment const & env = p.env();
-    auto pos = p.pos();
-    expr e; level_param_names ls;
-    buffer<expr> from;
-    buffer<expr> to;
-    std::tie(e, ls) =  parse_local_expr(p);
-    p.check_token_next(get_comma_tk(), "invalid #replace command, ',' expected");
-    parse_expr_vector(p, from);
-    p.check_token_next(get_comma_tk(), "invalid #replace command, ',' expected");
-    parse_expr_vector(p, to);
-    if (from.size() != to.size())
-        throw parser_error("invalid #replace command, from/to vectors have different size", pos);
-    tmp_type_context ctx(env, p.get_options());
-    fun_info_manager infom(ctx);
-    auto r = replace(infom, e, from, to);
-    if (!r)
-        throw parser_error("#replace commad failed", pos);
-    p.regular_stream() << *r << "\n";
-    return env;
-}
-
 enum class congr_kind { Simp, Default, Rel };
 
 static environment congr_cmd_core(parser & p, congr_kind kind) {
@@ -764,9 +680,11 @@ static environment congr_cmd_core(parser & p, congr_kind kind) {
     for (auto k : r->get_arg_kinds()) {
         if (!first) out << ", "; else first = false;
         switch (k) {
-        case congr_arg_kind::Fixed: out << "fixed"; break;
-        case congr_arg_kind::Eq:    out << "eq";    break;
-        case congr_arg_kind::Cast:  out << "cast";  break;
+        case congr_arg_kind::Fixed:        out << "fixed"; break;
+        case congr_arg_kind::FixedNoParam: out << "fixed-noparm"; break;
+        case congr_arg_kind::Eq:           out << "eq";    break;
+        case congr_arg_kind::HEq:          out << "heq";    break;
+        case congr_arg_kind::Cast:         out << "cast";  break;
         }
     }
     out << "]\n";
@@ -790,6 +708,27 @@ static environment congr_rel_cmd(parser & p) {
     return congr_cmd_core(p, congr_kind::Rel);
 }
 
+static environment hcongr_cmd(parser & p) {
+    environment const & env = p.env();
+    auto pos = p.pos();
+    expr e; level_param_names ls;
+    std::tie(e, ls) = parse_local_expr(p);
+    tmp_type_context    ctx(env, p.get_options());
+    app_builder         b(ctx);
+    fun_info_manager    infom(ctx);
+    congr_lemma_manager cm(b, infom);
+    optional<congr_lemma> r = cm.mk_hcongr(e);
+    if (!r)
+        throw parser_error("failed to generated heterogeneous congruence lemma", pos);
+    auto out = p.regular_stream();
+    out << r->get_proof() << "\n:\n" << r->get_type() << "\n";;
+    type_checker tc(env);
+    expr type = tc.check(r->get_proof(), ls).first;
+    if (!tc.is_def_eq(type, r->get_type()).first)
+        throw parser_error("heterogeneous congruence lemma reported type does not match given type", pos);
+    return env;
+}
+
 static environment simplify_cmd(parser & p) {
     name rel = p.check_constant_next("invalid #simplify command, constant expected");
     name ns = p.check_id_next("invalid #simplify command, id expected");
@@ -799,12 +738,12 @@ static environment simplify_cmd(parser & p) {
     std::tie(e, ls) = parse_local_expr(p);
 
     blast::scope_debug scope(p.env(), p.ios());
-    simp_rule_sets srss;
+    blast::simp_lemmas srss;
     if (ns == name("null")) {
     } else if (ns == name("env")) {
-        srss = get_simp_rule_sets(p.env());
+        srss = blast::get_simp_lemmas();
     } else {
-        srss = get_simp_rule_sets(p.env(), p.get_options(), ns);
+        srss = blast::get_simp_lemmas(ns);
     }
 
     blast::simp::result r = blast::simplify(rel, e, srss);
@@ -897,14 +836,12 @@ void init_cmd_table(cmd_table & r) {
     add_cmd(r, cmd_info("#trans",            "(for debugging purposes)", trans_cmd));
     add_cmd(r, cmd_info("#symm",             "(for debugging purposes)", symm_cmd));
     add_cmd(r, cmd_info("#compile",          "(for debugging purposes)", compile_cmd));
-    add_cmd(r, cmd_info("#replace",          "(for debugging purposes)", replace_cmd));
     add_cmd(r, cmd_info("#congr",            "(for debugging purposes)", congr_cmd));
+    add_cmd(r, cmd_info("#hcongr",           "(for debugging purposes)", hcongr_cmd));
     add_cmd(r, cmd_info("#congr_simp",       "(for debugging purposes)", congr_simp_cmd));
     add_cmd(r, cmd_info("#congr_rel",        "(for debugging purposes)", congr_rel_cmd));
     add_cmd(r, cmd_info("#normalizer",       "(for debugging purposes)", normalizer_cmd));
     add_cmd(r, cmd_info("#accessible",       "(for debugging purposes) display number of accessible declarations for blast tactic", accessible_cmd));
-    add_cmd(r, cmd_info("#decl_stats",       "(for debugging purposes) display declaration statistics", decl_stats_cmd));
-    add_cmd(r, cmd_info("#relevant_thms",    "(for debugging purposes) select relevant theorems using Meng&Paulson heuristic", relevant_thms_cmd));
     add_cmd(r, cmd_info("#simplify",         "(for debugging purposes) simplify given expression", simplify_cmd));
     add_cmd(r, cmd_info("#abstract_expr",    "(for debugging purposes) call abstract expr methods", abstract_expr_cmd));
 

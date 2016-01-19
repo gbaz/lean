@@ -7,6 +7,7 @@
 
 (require 'dash)
 (require 'dash-functional)
+(require 's)
 
 (cl-defstruct lean-option-record name type value desc)
 
@@ -24,7 +25,7 @@
     (setq str-list
           (-take (- (length str-list) 2)
                  (-drop 1 str-list)))
-    (string-join str-list "\n")))
+    (s-join "\n" str-list)))
 
 (defun lean-option-string (&optional use-flycheck)
   "Return string of Lean options set by lean-set-option command"
@@ -76,7 +77,7 @@
 
 (defun lean-option-read-int (prompt)
   (let* ((str (read-string prompt))
-         (val (string-to-int str))
+         (val (string-to-number str))
          tmp-str)
     (setq tmp-str (int-to-string val))
     (if (and (integerp val)
@@ -87,7 +88,7 @@
 
 (defun lean-option-read-uint (prompt)
   (let* ((str (read-string prompt))
-         (val (string-to-int str))
+         (val (string-to-number str))
          tmp-str)
     (setq tmp-str (int-to-string val))
     (if (and (integerp val)

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 Author: Leonardo de Moura
 */
+#include <algorithm>
 #include "kernel/find_fn.h"
 #include "kernel/instantiate.h"
 #include "kernel/error_msgs.h"
@@ -20,6 +21,16 @@ Author: Leonardo de Moura
 #include "library/projection.h"
 
 namespace lean {
+bool is_app_of(expr const & t, name const & f_name) {
+    expr const & fn = get_app_fn(t);
+    return is_constant(fn) && const_name(fn) == f_name;
+}
+
+bool is_app_of(expr const & t, name const & f_name, unsigned nargs) {
+    expr const & fn = get_app_fn(t);
+    return is_constant(fn) && const_name(fn) == f_name && get_app_num_args(t) == nargs;
+}
+
 bool is_standard(environment const & env) {
     return env.prop_proof_irrel() && env.impredicative();
 }
@@ -417,6 +428,10 @@ expr mk_true() {
     return *g_true;
 }
 
+bool is_true(expr const & e) {
+    return e == *g_true;
+}
+
 expr mk_true_intro() {
     return *g_true_intro;
 }
@@ -655,8 +670,17 @@ bool is_eq(expr const & e) {
 }
 
 bool is_eq(expr const & e, expr & lhs, expr & rhs) {
-    if (!is_eq(e) || !is_app(app_fn(e)))
+    if (!is_eq(e) || get_app_num_args(e) != 3)
         return false;
+    lhs = app_arg(app_fn(e));
+    rhs = app_arg(e);
+    return true;
+}
+
+bool is_eq(expr const & e, expr & A, expr & lhs, expr & rhs) {
+    if (!is_eq(e) || get_app_num_args(e) != 3)
+        return false;
+    A   = app_arg(app_fn(app_fn(e)));
     lhs = app_arg(app_fn(e));
     rhs = app_arg(e);
     return true;
@@ -918,11 +942,12 @@ format format_goal(formatter const & _fmt, buffer<expr> const & hyps, expr const
     formatter fmt    = _fmt.update_options(opts);
     unsigned indent  = get_pp_indent(opts);
     bool unicode     = get_pp_unicode(opts);
-    bool compact     = get_pp_compact_goals(opts);
+    bool compact     = get_pp_goal_compact(opts);
+    unsigned max_hs  = get_pp_goal_max_hyps(opts);
     format turnstile = unicode ? format("\u22A2") /* ⊢ */ : format("|-");
     format r;
-    unsigned i = hyps.size();
-    bool first = true;
+    unsigned i     = std::min(max_hs, hyps.size());
+    bool first     = true;
     while (i > 0) {
         i--;
         expr l     = hyps[i];
@@ -943,6 +968,8 @@ format format_goal(formatter const & _fmt, buffer<expr> const & hyps, expr const
             r = compose(comma(), line()) + r;
         r = group(ids + space() + colon() + nest(indent, line() + fmt(t))) + r;
     }
+    if (hyps.size() > max_hs)
+        r = r + compose(comma(), line()) + format("... (set pp.goal.max_hypotheses to display remaining hypotheses)");
     if (compact)
         r = group(r);
     r += line() + turnstile + space() + nest(indent, fmt(tmp_subst.instantiate(conclusion)));

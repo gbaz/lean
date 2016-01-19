@@ -130,15 +130,15 @@ private theorem aux₀ (s : finset A) : {t ∈ powerset s | card t = 0} = '{∅}
 ext (take t, iff.intro
   (assume H,
     assert t = ∅, from eq_empty_of_card_eq_zero (of_mem_sep H),
-    show t ∈ '{ ∅ }, by rewrite [this, mem_singleton_eq'])
+    show t ∈ '{ ∅ }, by rewrite [this, mem_singleton_iff])
   (assume H,
-    assert t = ∅, by rewrite mem_singleton_eq' at H; assumption,
+    assert t = ∅, by rewrite mem_singleton_iff at H; assumption,
     by substvars; exact mem_sep_of_mem !empty_mem_powerset rfl))
 
 private theorem aux₁ (k : ℕ) : {t ∈ powerset (∅ : finset A) | card t = succ k} = ∅ :=
 eq_empty_of_forall_not_mem (take t, assume H,
   assert t ∈ powerset ∅, from mem_of_mem_sep H,
-  assert t = ∅, by rewrite [powerset_empty at this, mem_singleton_eq' at this]; assumption,
+  assert t = ∅, by rewrite [powerset_empty at this, mem_singleton_iff at this]; assumption,
   have card (∅ : finset A) = succ k, by rewrite -this; apply of_mem_sep H,
   nat.no_confusion this)
 
@@ -148,8 +148,8 @@ have a ∈ s, from mem_of_subset_of_mem (subset_of_mem_powerset tpows) this,
 anins this
 
 private theorem aux₃ {a : A} {s t : finset A} (anins : a ∉ s) (k : ℕ) :
-  t ∈ (insert a) '[powerset s] ∧ card t = succ k ↔
-    t ∈ (insert a) '[{t' ∈ powerset s | card t' = k}] :=
+  t ∈ (insert a) ' (powerset s) ∧ card t = succ k ↔
+    t ∈ (insert a) ' {t' ∈ powerset s | card t' = k} :=
 iff.intro
   (assume H,
     obtain H' cardt, from H,
@@ -167,13 +167,13 @@ iff.intro
     assert t'pows : t' ∈ powerset s, from mem_of_mem_sep Ht',
     assert cardt' : card t' = k, from of_mem_sep Ht',
     and.intro
-      (show t ∈ (insert a) '[powerset s], from mem_image t'pows teq)
+      (show t ∈ (insert a) ' (powerset s), from mem_image t'pows teq)
       (show card t = succ k,
         by rewrite [-teq, card_insert_of_not_mem (aux₂ anins t'pows), cardt']))
 
 private theorem aux₄ {a : A} {s : finset A} (anins : a ∉ s) (k : ℕ) :
   {t ∈ powerset (insert a s)| card t = succ k} =
-    {t ∈ powerset s | card t = succ k} ∪ (insert a) '[{t ∈ powerset s | card t = k}] :=
+    {t ∈ powerset s | card t = succ k} ∪ (insert a) ' {t ∈ powerset s | card t = k} :=
 begin
   apply ext, intro t,
   rewrite [powerset_insert anins, mem_union_iff, *mem_sep_iff, mem_union_iff, and.right_distrib,
@@ -181,7 +181,7 @@ begin
 end
 
 private theorem aux₅ {a : A} {s : finset A} (anins : a ∉ s) (k : ℕ) :
-  {t ∈ powerset s | card t = succ k} ∩ (insert a) '[{t ∈ powerset s | card t = k}] = ∅ :=
+  {t ∈ powerset s | card t = succ k} ∩ (insert a) ' {t ∈ powerset s | card t = k} = ∅ :=
 inter_eq_empty
   (take t, assume Ht₁ Ht₂,
     have tpows : t ∈ powerset s, from mem_of_mem_sep Ht₁,
@@ -191,7 +191,7 @@ inter_eq_empty
     show false, from anint aint)
 
 private theorem aux₆ {a : A} {s : finset A} (anins : a ∉ s) (k : ℕ) :
-  card ((insert a) '[{t ∈ powerset s | card t = k}]) = card {t ∈ powerset s | card t = k} :=
+  card ((insert a) ' {t ∈ powerset s | card t = k}) = card {t ∈ powerset s | card t = k} :=
 have set.inj_on (insert a) (ts {t ∈ powerset s| card t = k}), from
   take t₁ t₂, assume Ht₁ Ht₂,
   assume Heq : insert a t₁ = insert a t₂,

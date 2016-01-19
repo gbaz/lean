@@ -42,13 +42,12 @@ Author: Leonardo de Moura
 #include "library/composition_manager.h"
 #include "library/noncomputable.h"
 #include "library/aux_recursors.h"
-#include "library/decl_stats.h"
-#include "library/meng_paulson.h"
 #include "library/class_instance_resolution.h"
 #include "library/type_context.h"
 #include "library/congr_lemma_manager.h"
 #include "library/app_builder.h"
 #include "library/attribute_manager.h"
+#include "library/fun_info_manager.h"
 
 namespace lean {
 void initialize_library_module() {
@@ -90,23 +89,21 @@ void initialize_library_module() {
     initialize_composition_manager();
     initialize_noncomputable();
     initialize_aux_recursors();
-    initialize_decl_stats();
-    initialize_meng_paulson();
     initialize_class_instance_resolution();
     initialize_type_context();
     initialize_light_rule_set();
     initialize_congr_lemma_manager();
     initialize_app_builder();
+    initialize_fun_info_manager();
 }
 
 void finalize_library_module() {
+    finalize_fun_info_manager();
     finalize_app_builder();
     finalize_congr_lemma_manager();
     finalize_light_rule_set();
     finalize_type_context();
     finalize_class_instance_resolution();
-    finalize_meng_paulson();
-    finalize_decl_stats();
     finalize_aux_recursors();
     finalize_noncomputable();
     finalize_composition_manager();

@@ -447,6 +447,21 @@ expr const & get_app_args(expr const & e, buffer<expr> & args) {
     return *it;
 }
 
+expr const & get_app_args_at_most(expr const & e, unsigned num, buffer<expr> & args) {
+    unsigned sz = args.size();
+    expr const * it = &e;
+    unsigned i = 0;
+    while (is_app(*it)) {
+        if (i == num)
+            break;
+        args.push_back(app_arg(*it));
+        it = &(app_fn(*it));
+        i++;
+    }
+    std::reverse(args.begin() + sz, args.end());
+    return *it;
+}
+
 expr const & get_app_rev_args(expr const & e, buffer<expr> & args) {
     expr const * it = &e;
     while (is_app(*it)) {
@@ -478,7 +493,6 @@ static name * g_default_name = nullptr;
 static name const & get_default_var_name() {
     return *g_default_name;
 }
-static name const & g_default_var_name = get_default_var_name(); // force it to be initialized
 
 bool is_default_var_name(name const & n) { return n == get_default_var_name(); }
 expr mk_arrow(expr const & t, expr const & e, tag g) {

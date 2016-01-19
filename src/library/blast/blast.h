@@ -112,6 +112,8 @@ bool is_prop(expr const & e);
 bool is_def_eq(expr const & e1, expr const & e2);
 /** \brief Try to synthesize an element of the given type class with respect to the blast local context. */
 optional<expr> mk_class_instance(expr const & e);
+/** \brief Try to synthesize an instance of (subsingleton type) with respect to the blast local context. */
+optional<expr> mk_subsingleton_instance(expr const & type);
 
 /** \brief Create a congruence lemma for the given function.
     \pre num_args <= arity of fn
@@ -126,6 +128,10 @@ optional<expr> mk_class_instance(expr const & e);
 optional<congr_lemma> mk_congr_lemma_for_simp(expr const & fn, unsigned num_args);
 /** \brief Similar to previous procedure, but num_args == arith of fn */
 optional<congr_lemma> mk_congr_lemma_for_simp(expr const & fn);
+/** \brief Similar to previous procedures, but \c a is a function application,
+    and the arguments are taken into account when computing the lemma.
+    \pre is_app(a) */
+optional<congr_lemma> mk_specialized_congr_lemma_for_simp(expr const & a);
 
 /** \brief Create a congruence lemma for the given function.
     \pre num_args <= arity of fn
@@ -140,6 +146,13 @@ optional<congr_lemma> mk_congr_lemma_for_simp(expr const & fn);
 optional<congr_lemma> mk_congr_lemma(expr const & fn, unsigned num_args);
 /** \brief Similar to previous procedure, but num_args == arith of fn */
 optional<congr_lemma> mk_congr_lemma(expr const & fn);
+/** \brief Similar to previous procedures, but \c a is a function application,
+    and the arguments are taken into account when computing the lemma.
+    \pre is_app(a) */
+optional<congr_lemma> mk_specialized_congr_lemma(expr const & a);
+/** \brief Create more general congruence lemma based on heterogeneous equality. */
+optional<congr_lemma> mk_hcongr_lemma(expr const & fn, unsigned num_args);
+
 optional<congr_lemma> mk_rel_iff_congr(expr const & fn);
 optional<congr_lemma> mk_rel_eq_congr(expr const & fn);
 
@@ -148,6 +161,12 @@ fun_info get_fun_info(expr const & fn);
 /** \brief Retrieve information for the given function.
     \pre nargs <= arity fn. */
 fun_info get_fun_info(expr const & fn, unsigned nargs);
+/** \brief Retrieve information for the given function-application
+    taking into account the actual arguments.
+    \pre is_app(a) */
+fun_info get_specialized_fun_info(expr const & a);
+/** \brief Return the given function specialization prefix size. */
+unsigned get_specialization_prefix_size(expr const & fn, unsigned nargs);
 
 /** \brief Hash and equality test for abstract expressions */
 unsigned abstract_hash(expr const & e);
@@ -181,6 +200,12 @@ void display_expr(expr const & e);
 /** \brief Display message in the blast tactic diagnostic channel. */
 void display(char const * msg);
 void display(sstream const & msg);
+
+/** \brief Display curr state at buffered diagnostic channel used to craft an exception for user */
+void display_curr_state_at_buffer(bool include_inactive = true);
+/** \brief Display msng at buffered diagnostic channel used to craft an exception for user */
+void display_at_buffer(sstream const & msg);
+
 /** \brief Create a local scope for saving the assignment and
     metavariable declarations at curr_state() */
 class scope_assignment {
@@ -245,8 +270,8 @@ public:
     \remark This procedure should only be used for **debugging purposes**. */
 expr internalize(expr const & e);
 }
-optional<expr> blast_goal(environment const & env, io_state const & ios, list<name> const & ls, list<name> const & ds,
-                          goal const & g);
+pair<expr, constraint_seq> blast_goal(environment const & env, io_state const & ios, list<name> const & ls, list<name> const & ds,
+                                      goal const & g);
 void initialize_blast();
 void finalize_blast();
 }
